@@ -1,0 +1,38 @@
+service: inscricao-backend-lambda
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: python3.9
+  region: us-east-1
+  iam:
+    role:
+      statements:
+        - Effect: "Allow"
+          Action:
+            - dynamodb:PutItem
+          Resource:
+            - arn:aws:dynamodb:us-east-1:*:table/Inscricoes
+
+functions:
+  salvarInscricao:
+    handler: handler.salvar_inscricao
+    events:
+      - http:
+          path: inscricao
+          method: post
+          cors: true
+
+resources:
+  Resources:
+    Inscricoes:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: Inscricoes
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST

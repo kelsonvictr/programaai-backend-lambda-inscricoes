@@ -39,15 +39,26 @@ def salvar_inscricao(event, context):
         # Retorna resposta de sucesso
         return {
             'statusCode': 201,
-            'headers': {'Content-Type': 'application/json'},
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': "http://programaai-site.s3-website-us-east-1.amazonaws.com",
+                'Access-Control-Allow-Headers': '*',
+                'Access-Control-Allow-Methods': 'OPTIONS,POST'
+            },
             'body': json.dumps({'message': 'Inscrição realizada com sucesso!'})
         }
+
 
     except Exception as e:
         # Em caso de erro, retorna mensagem e status 500
         return {
             'statusCode': 500,
-            'headers': {'Content-Type': 'application/json'},
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': 'https://programaai-site.s3-website-us-east-1.amazonaws.com',
+                'Access-Control-Allow-Headers': '*',
+                'Access-Control-Allow-Methods': 'OPTIONS,POST'
+            },
             'body': json.dumps({'error': str(e)})
         }
 

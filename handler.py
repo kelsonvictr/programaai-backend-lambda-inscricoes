@@ -18,6 +18,7 @@ def salvar_inscricao(event, context):
         # Monta o item a ser salvo no banco
         item = {
             'id': str(uuid.uuid4()),
+            'curso': body['curso'],
             'nomeCompleto': body['nomeCompleto'],
             'email': body['email'],
             'whatsapp': body['whatsapp'],
@@ -68,6 +69,7 @@ def enviar_email_para_admin(inscricao):
     mensagem = f"""
 Nova inscrição recebida:
 
+Curso: {inscricao['curso']}
 Nome: {inscricao['nomeCompleto']}
 Email: {inscricao['email']}
 WhatsApp: {inscricao['whatsapp']}

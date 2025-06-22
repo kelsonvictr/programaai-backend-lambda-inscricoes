@@ -5,11 +5,11 @@ import os
 import requests
 from datetime import datetime, timedelta, timezone
 
-# Inicializa DynamoDB e configura tabela
+# Inicializa DynamoDB e configura a tabela
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table('Inscricoes')
 
-# Telegram config via variáveis de ambiente
+# Variáveis de ambiente para o Telegram
 TELEGRAM_TOKEN = os.environ['TELEGRAM_TOKEN']
 TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 
@@ -35,16 +35,13 @@ def salvar_inscricao(event, context):
         # Salva no DynamoDB
         table.put_item(Item=item)
 
-        # Envia a inscrição via Telegram
+        # Envia notificação para o Telegram
         enviar_para_telegram(item)
 
         return {
             'statusCode': 201,
             'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': 'https://programaai.dev',
-                'Access-Control-Allow-Headers': '*',
-                'Access-Control-Allow-Methods': 'OPTIONS,POST'
+                'Content-Type': 'application/json'
             },
             'body': json.dumps({'message': 'Inscrição realizada com sucesso!'})
         }
@@ -53,10 +50,7 @@ def salvar_inscricao(event, context):
         return {
             'statusCode': 500,
             'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': 'https://programaai.dev',
-                'Access-Control-Allow-Headers': '*',
-                'Access-Control-Allow-Methods': 'OPTIONS,POST'
+                'Content-Type': 'application/json'
             },
             'body': json.dumps({'error': str(e)})
         }

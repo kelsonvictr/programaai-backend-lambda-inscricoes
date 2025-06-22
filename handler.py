@@ -35,14 +35,14 @@ def salvar_inscricao(event, context):
         table.put_item(Item=item)
 
         # Envia e-mail de notificação
-        enviar_email_para_admin(item)
+        # enviar_email_para_admin(item)
 
         # Retorna resposta de sucesso
         return {
             'statusCode': 201,
             'headers': {
                 'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': "https://programaai.dev",
+                'Access-Control-Allow-Origin': 'https://programaai.dev',
                 'Access-Control-Allow-Headers': '*',
                 'Access-Control-Allow-Methods': 'OPTIONS,POST'
             },

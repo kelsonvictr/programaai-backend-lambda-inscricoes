@@ -32,6 +32,8 @@ jobs:
         run: |
           echo "EMAIL_ORIGEM=${{ secrets.EMAIL_ORIGEM }}" >> $GITHUB_ENV
           echo "EMAIL_DESTINO=${{ secrets.EMAIL_DESTINO }}" >> $GITHUB_ENV
+          echo "TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}" >> $GITHUB_ENV
+          echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> $GITHUB_ENV
 
       - name: Deploy with Serverless
         run: serverless deploy

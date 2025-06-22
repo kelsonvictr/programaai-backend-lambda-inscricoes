@@ -27,7 +27,11 @@ functions:
       - http:
           path: inscricao
           method: post
-          cors: true
+          cors:
+            origin: 'https://programaai.dev'
+            headers:
+              - Content-Type
+            allowCredentials: false
 
 resources:
   Resources:

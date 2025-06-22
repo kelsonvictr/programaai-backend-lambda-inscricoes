@@ -42,10 +42,7 @@ def salvar_inscricao(event, context):
             'statusCode': 201,
             'headers': {
                 'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': [
-    "https://programaai.dev",
-    "https://du4l4uq7skxba.cloudfront.net"
-],
+                'Access-Control-Allow-Origin': "https://programaai.dev",
                 'Access-Control-Allow-Headers': '*',
                 'Access-Control-Allow-Methods': 'OPTIONS,POST'
             },
@@ -59,10 +56,7 @@ def salvar_inscricao(event, context):
             'statusCode': 500,
             'headers': {
                 'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': [
-    "https://programaai.dev",
-    "https://du4l4uq7skxba.cloudfront.net"
-],
+                'Access-Control-Allow-Origin': 'https://programaai.dev',
                 'Access-Control-Allow-Headers': '*',
                 'Access-Control-Allow-Methods': 'OPTIONS,POST'
             },

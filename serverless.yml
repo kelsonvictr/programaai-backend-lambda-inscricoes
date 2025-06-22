@@ -10,6 +10,8 @@ provider:
   environment:
     EMAIL_ORIGEM: ${env:EMAIL_ORIGEM}
     EMAIL_DESTINO: ${env:EMAIL_DESTINO}
+    TELEGRAM_TOKEN: ${env:TELEGRAM_TOKEN}
+    TELEGRAM_CHAT_ID: ${env:TELEGRAM_CHAT_ID}
 
   iam:
     role:

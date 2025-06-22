@@ -28,7 +28,7 @@ functions:
           path: inscricao
           method: post
           cors:
-            origin: 'http://programaai-site.s3-website-us-east-1.amazonaws.com'
+            origin: 'https://programaai.dev'
             headers:
               - Content-Type
             allowCredentials: false

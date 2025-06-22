@@ -14,8 +14,6 @@ TELEGRAM_TOKEN = os.environ['TELEGRAM_TOKEN']
 TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 
 def salvar_inscricao(event, context):
-    allowed_origin = 'https://programaai.dev'
-
     try:
         body = json.loads(event['body'])
 
@@ -44,7 +42,7 @@ def salvar_inscricao(event, context):
             'statusCode': 201,
             'headers': {
                 'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': allowed_origin,
+                'Access-Control-Allow-Origin': 'https://programaai.dev',
                 'Access-Control-Allow-Headers': '*',
                 'Access-Control-Allow-Methods': 'OPTIONS,POST'
             },
@@ -56,7 +54,7 @@ def salvar_inscricao(event, context):
             'statusCode': 500,
             'headers': {
                 'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': allowed_origin,
+                'Access-Control-Allow-Origin': 'https://programaai.dev',
                 'Access-Control-Allow-Headers': '*',
                 'Access-Control-Allow-Methods': 'OPTIONS,POST'
             },

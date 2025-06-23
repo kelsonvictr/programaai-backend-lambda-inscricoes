@@ -5,15 +5,25 @@ import os
 import requests
 from datetime import datetime, timedelta, timezone
 
-# Inicializa DynamoDB e configura tabela
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table('Inscricoes')
 
-# Telegram config via variáveis de ambiente
 TELEGRAM_TOKEN = os.environ['TELEGRAM_TOKEN']
 TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 
 def salvar_inscricao(event, context):
+    # Responde ao preflight (OPTIONS)
+    if event['httpMethod'] == 'OPTIONS':
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Access-Control-Allow-Origin': 'https://programaai.dev',
+                'Access-Control-Allow-Headers': 'Content-Type',
+                'Access-Control-Allow-Methods': 'OPTIONS,POST'
+            },
+            'body': json.dumps({'message': 'Preflight OK'})
+        }
+
     try:
         body = json.loads(event['body'])
 
@@ -32,19 +42,16 @@ def salvar_inscricao(event, context):
             'dataInscricao': datetime.now(timezone(timedelta(hours=-3))).isoformat()
         }
 
-        # Salva no DynamoDB
         table.put_item(Item=item)
-
-        # Envia a inscrição via Telegram
         enviar_para_telegram(item)
 
         return {
             'statusCode': 201,
             'headers': {
-                'Content-Type': 'application/json',
                 'Access-Control-Allow-Origin': 'https://programaai.dev',
                 'Access-Control-Allow-Headers': 'Content-Type',
-                'Access-Control-Allow-Methods': 'OPTIONS,POST'
+                'Access-Control-Allow-Methods': 'OPTIONS,POST',
+                'Content-Type': 'application/json'
             },
             'body': json.dumps({'message': 'Inscrição realizada com sucesso!'})
         }
@@ -53,24 +60,13 @@ def salvar_inscricao(event, context):
         return {
             'statusCode': 500,
             'headers': {
-                'Content-Type': 'application/json',
                 'Access-Control-Allow-Origin': 'https://programaai.dev',
                 'Access-Control-Allow-Headers': 'Content-Type',
-                'Access-Control-Allow-Methods': 'OPTIONS,POST'
+                'Access-Control-Allow-Methods': 'OPTIONS,POST',
+                'Content-Type': 'application/json'
             },
             'body': json.dumps({'error': str(e)})
         }
-
-def cors_preflight(event, context):
-    return {
-        'statusCode': 200,
-        'headers': {
-            'Access-Control-Allow-Origin': 'https://programaai.dev',
-            'Access-Control-Allow-Headers': 'Content-Type',
-            'Access-Control-Allow-Methods': 'OPTIONS,POST'
-        },
-        'body': ''
-    }
 
 def enviar_para_telegram(inscricao):
     mensagem = f"""
@@ -88,11 +84,8 @@ def enviar_para_telegram(inscricao):
 👥 Amigo: {inscricao.get('nomeAmigo', '')}
 🕒 Data: {inscricao['dataInscricao']}
 """
-
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
+    requests.post(url, json={
         'chat_id': TELEGRAM_CHAT_ID,
         'text': mensagem
-    }
-
-    requests.post(url, json=payload)
+    })

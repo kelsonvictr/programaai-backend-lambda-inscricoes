@@ -33,36 +33,6 @@ functions:
             origin: 'https://programaai.dev'
             headers:
               - Content-Type
-              - X-Amz-Date
-              - Authorization
-              - X-Api-Key
-              - X-Amz-Security-Token
-              - X-Amz-User-Agent
-            allowCredentials: false
-      - http:
-          path: inscricao
-          method: options
-          cors:
-            origin: 'https://programaai.dev'
-            headers:
-              - Content-Type
-              - X-Amz-Date
-              - Authorization
-              - X-Api-Key
-              - X-Amz-Security-Token
-              - X-Amz-User-Agent
-            allowCredentials: false
-
-resources:
-  Resources:
-    Inscricoes:
-      Type: AWS::DynamoDB::Table
-      Properties:
-        TableName: Inscricoes
-        AttributeDefinitions:
-          - AttributeName: id
-            AttributeType: S
-        KeySchema:
-          - AttributeName: id
-            KeyType: HASH
-        BillingMode: PAY_PER_REQUEST
+            methods:
+              - OPTIONS
+              - POST

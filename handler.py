@@ -14,7 +14,6 @@ TELEGRAM_TOKEN = os.environ['TELEGRAM_TOKEN']
 TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 
 def salvar_inscricao(event, context):
-
     try:
         body = json.loads(event['body'])
 
@@ -44,7 +43,7 @@ def salvar_inscricao(event, context):
             'headers': {
                 'Content-Type': 'application/json',
                 'Access-Control-Allow-Origin': 'https://programaai.dev',
-                'Access-Control-Allow-Headers': '*',
+                'Access-Control-Allow-Headers': 'Content-Type',
                 'Access-Control-Allow-Methods': 'OPTIONS,POST'
             },
             'body': json.dumps({'message': 'Inscrição realizada com sucesso!'})
@@ -56,11 +55,22 @@ def salvar_inscricao(event, context):
             'headers': {
                 'Content-Type': 'application/json',
                 'Access-Control-Allow-Origin': 'https://programaai.dev',
-                'Access-Control-Allow-Headers': '*',
+                'Access-Control-Allow-Headers': 'Content-Type',
                 'Access-Control-Allow-Methods': 'OPTIONS,POST'
             },
             'body': json.dumps({'error': str(e)})
         }
+
+def cors_preflight(event, context):
+    return {
+        'statusCode': 200,
+        'headers': {
+            'Access-Control-Allow-Origin': 'https://programaai.dev',
+            'Access-Control-Allow-Headers': 'Content-Type',
+            'Access-Control-Allow-Methods': 'OPTIONS,POST'
+        },
+        'body': ''
+    }
 
 def enviar_para_telegram(inscricao):
     mensagem = f"""

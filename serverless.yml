@@ -30,7 +30,7 @@ functions:
           path: inscricao
           method: post
           cors:
-            origin: 'https://programaai.dev'
+            origin: 'https://programaai.dev/'
             headers:
               - Content-Type
             methods:

@@ -17,7 +17,7 @@ def salvar_inscricao(event, context):
         return {
             'statusCode': 200,
             'headers': {
-                'Access-Control-Allow-Origin': 'https://programaai.dev',
+                'Access-Control-Allow-Origin': 'https://programaai.dev/',
                 'Access-Control-Allow-Headers': 'Content-Type',
                 'Access-Control-Allow-Methods': 'OPTIONS,POST'
             },
@@ -48,7 +48,7 @@ def salvar_inscricao(event, context):
         return {
             'statusCode': 201,
             'headers': {
-                'Access-Control-Allow-Origin': 'https://programaai.dev',
+                'Access-Control-Allow-Origin': 'https://programaai.dev/',
                 'Access-Control-Allow-Headers': 'Content-Type',
                 'Access-Control-Allow-Methods': 'OPTIONS,POST',
                 'Content-Type': 'application/json'

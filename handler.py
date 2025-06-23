@@ -3,17 +3,25 @@ import boto3
 import uuid
 import os
 import requests
+import logging
 from datetime import datetime, timedelta, timezone
 
+# Configura logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# Inicializa recursos
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table('Inscricoes')
 
-TELEGRAM_TOKEN = os.environ['TELEGRAM_TOKEN']
-TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
+TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
+TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
 def salvar_inscricao(event, context):
-    # Pré-voo (CORS)
-    if event['httpMethod'] == 'OPTIONS':
+    logger.info("Evento recebido: %s", json.dumps(event))
+
+    if event.get('httpMethod') == 'OPTIONS':
+        logger.info("Requisição OPTIONS (CORS preflight)")
         return {
             'statusCode': 200,
             'headers': cors_headers(),
@@ -21,7 +29,9 @@ def salvar_inscricao(event, context):
         }
 
     try:
-        body = json.loads(event['body'])
+        body_raw = event.get('body')
+        logger.info("Body recebido bruto: %s", body_raw)
+        body = json.loads(body_raw)
 
         item = {
             'id': str(uuid.uuid4()),
@@ -38,12 +48,15 @@ def salvar_inscricao(event, context):
             'dataInscricao': datetime.now(timezone(timedelta(hours=-3))).isoformat()
         }
 
+        logger.info("Item a ser salvo no DynamoDB: %s", json.dumps(item))
         table.put_item(Item=item)
+        logger.info("Item salvo com sucesso no DynamoDB")
 
         try:
             enviar_para_telegram(item)
+            logger.info("Mensagem enviada para o Telegram com sucesso")
         except Exception as err:
-            print("Erro ao enviar Telegram:", err)
+            logger.error("Erro ao enviar mensagem para o Telegram: %s", err)
 
         return {
             'statusCode': 201,
@@ -52,6 +65,7 @@ def salvar_inscricao(event, context):
         }
 
     except Exception as e:
+        logger.error("Erro inesperado: %s", e, exc_info=True)
         return {
             'statusCode': 500,
             'headers': cors_headers(),
@@ -75,10 +89,11 @@ def enviar_para_telegram(inscricao):
 🕒 Data: {inscricao['dataInscricao']}
 """
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={
+    response = requests.post(url, json={
         'chat_id': TELEGRAM_CHAT_ID,
         'text': mensagem
     })
+    logger.info("Resposta do Telegram: %s", response.text)
 
 def cors_headers():
     return {

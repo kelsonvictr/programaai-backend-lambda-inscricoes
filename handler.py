@@ -97,7 +97,7 @@ def enviar_para_telegram(inscricao):
 
 def cors_headers():
     return {
-        'Access-Control-Allow-Origin': 'https://programaai.dev/',
+        'Access-Control-Allow-Origin': 'https://programaai.dev',
         'Access-Control-Allow-Headers': '*',
         'Access-Control-Allow-Methods': 'OPTIONS,POST',
         'Content-Type': 'application/json'

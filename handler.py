@@ -32,6 +32,13 @@ def salvar_inscricao(event, context):
         body_raw = event.get('body')
         logger.info("Body recebido bruto: %s", body_raw)
         body = json.loads(body_raw)
+        if body.get("website"):
+            logger.warning("Tentativa de bot detectada. Campo 'website' foi preenchido.")
+            return {
+                'statusCode': 400,
+                'headers': cors_headers(),
+                'body': json.dumps({'error': 'Solicitação inválida.'})
+            }
 
         item = {
             'id': str(uuid.uuid4()),

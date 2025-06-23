@@ -43,7 +43,7 @@ def salvar_inscricao(event, context):
         }
 
         table.put_item(Item=item)
-        enviar_para_telegram(item)
+        #enviar_para_telegram(item)
 
         return {
             'statusCode': 201,

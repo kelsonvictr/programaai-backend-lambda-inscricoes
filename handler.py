@@ -12,16 +12,12 @@ TELEGRAM_TOKEN = os.environ['TELEGRAM_TOKEN']
 TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 
 def salvar_inscricao(event, context):
-    # Responde ao preflight (OPTIONS)
+    # Pré-voo (CORS)
     if event['httpMethod'] == 'OPTIONS':
         return {
             'statusCode': 200,
-            'headers': {
-                'Access-Control-Allow-Origin': 'https://programaai.dev/',
-                'Access-Control-Allow-Headers': 'Content-Type',
-                'Access-Control-Allow-Methods': 'OPTIONS,POST'
-            },
-            'body': json.dumps({'message': 'Preflight OK'})
+            'headers': cors_headers(),
+            'body': json.dumps({'message': 'CORS OK'})
         }
 
     try:
@@ -43,28 +39,22 @@ def salvar_inscricao(event, context):
         }
 
         table.put_item(Item=item)
-        #enviar_para_telegram(item)
+
+        try:
+            enviar_para_telegram(item)
+        except Exception as err:
+            print("Erro ao enviar Telegram:", err)
 
         return {
             'statusCode': 201,
-            'headers': {
-                'Access-Control-Allow-Origin': 'https://programaai.dev/',
-                'Access-Control-Allow-Headers': 'Content-Type',
-                'Access-Control-Allow-Methods': 'OPTIONS,POST',
-                'Content-Type': 'application/json'
-            },
+            'headers': cors_headers(),
             'body': json.dumps({'message': 'Inscrição realizada com sucesso!'})
         }
 
     except Exception as e:
         return {
             'statusCode': 500,
-            'headers': {
-                'Access-Control-Allow-Origin': 'https://programaai.dev',
-                'Access-Control-Allow-Headers': 'Content-Type',
-                'Access-Control-Allow-Methods': 'OPTIONS,POST',
-                'Content-Type': 'application/json'
-            },
+            'headers': cors_headers(),
             'body': json.dumps({'error': str(e)})
         }
 
@@ -89,3 +79,11 @@ def enviar_para_telegram(inscricao):
         'chat_id': TELEGRAM_CHAT_ID,
         'text': mensagem
     })
+
+def cors_headers():
+    return {
+        'Access-Control-Allow-Origin': 'https://programaai.dev',
+        'Access-Control-Allow-Headers': '*',
+        'Access-Control-Allow-Methods': 'OPTIONS,POST',
+        'Content-Type': 'application/json'
+    }

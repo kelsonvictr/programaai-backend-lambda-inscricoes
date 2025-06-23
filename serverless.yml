@@ -1,5 +1,5 @@
 service: inscricao-backend-lambda
-frameworkVersion: '3.38.0'
+frameworkVersion: '3'
 
 provider:
   name: aws
@@ -8,8 +8,6 @@ provider:
   stage: dev
 
   environment:
-    EMAIL_ORIGEM: ${env:EMAIL_ORIGEM}
-    EMAIL_DESTINO: ${env:EMAIL_DESTINO}
     TELEGRAM_TOKEN: ${env:TELEGRAM_TOKEN}
     TELEGRAM_CHAT_ID: ${env:TELEGRAM_CHAT_ID}
 
@@ -19,7 +17,6 @@ provider:
         - Effect: Allow
           Action:
             - dynamodb:PutItem
-            - ses:SendEmail
           Resource: "*"
 
 functions:
@@ -29,10 +26,4 @@ functions:
       - http:
           path: inscricao
           method: post
-          cors:
-            origin: 'https://programaai.dev/'
-            headers:
-              - Content-Type
-            methods:
-              - OPTIONS
-              - POST
+          cors: true

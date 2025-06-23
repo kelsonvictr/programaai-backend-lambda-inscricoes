@@ -4,6 +4,11 @@ frameworkVersion: '3'
 plugins:
   - serverless-python-requirements
 
+custom:
+  pythonRequirements:
+    dockerizePip: true
+    fileName: requirements.txt
+
 provider:
   name: aws
   runtime: python3.9

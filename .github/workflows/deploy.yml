@@ -18,11 +18,15 @@ jobs:
         with:
           node-version: 18
 
-      - name: Install Serverless Framework v3
-        run: npm install -g serverless@3.38.0
+      - name: Setup Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
 
-      - name: Install Serverless Python Requirements Plugin
-        run: npm install --save-dev serverless-python-requirements
+      - name: Install Serverless Framework e Plugin
+        run: |
+          npm install -g serverless@3.38.0
+          npm install --save-dev serverless-python-requirements
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
@@ -39,4 +43,4 @@ jobs:
           echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> $GITHUB_ENV
 
       - name: Deploy with Serverless
-        run: serverless deploy
+        run: npx serverless deploy

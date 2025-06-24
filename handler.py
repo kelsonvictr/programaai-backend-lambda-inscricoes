@@ -6,11 +6,9 @@ import requests
 import logging
 from datetime import datetime, timedelta, timezone
 
-# Configura logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Inicializa recursos
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table('Inscricoes')
 
@@ -21,7 +19,6 @@ def salvar_inscricao(event, context):
     logger.info("Evento recebido: %s", json.dumps(event))
 
     if event.get('httpMethod') == 'OPTIONS':
-        logger.info("Requisição OPTIONS (CORS preflight)")
         return {
             'statusCode': 200,
             'headers': cors_headers(),
@@ -32,6 +29,7 @@ def salvar_inscricao(event, context):
         body_raw = event.get('body')
         logger.info("Body recebido bruto: %s", body_raw)
         body = json.loads(body_raw)
+
         if body.get("website"):
             logger.warning("Tentativa de bot detectada. Campo 'website' foi preenchido.")
             return {
@@ -39,6 +37,10 @@ def salvar_inscricao(event, context):
                 'headers': cors_headers(),
                 'body': json.dumps({'error': 'Solicitação inválida.'})
             }
+
+        agora = datetime.now(timezone(timedelta(hours=-3))).isoformat()
+        ip = event.get('requestContext', {}).get('identity', {}).get('sourceIp', 'desconhecido')
+        user_agent = event.get('headers', {}).get('User-Agent', 'desconhecido')
 
         item = {
             'id': str(uuid.uuid4()),
@@ -52,10 +54,23 @@ def salvar_inscricao(event, context):
             'ondeEstuda': body.get('ondeEstuda', ''),
             'comoSoube': body['comoSoube'],
             'nomeAmigo': body.get('nomeAmigo', ''),
-            'dataInscricao': datetime.now(timezone(timedelta(hours=-3))).isoformat()
+            'dataInscricao': agora,
+            'aceitouTermos': True,
+            'ip': ip,
+            'userAgent': user_agent
         }
 
-        logger.info("Item a ser salvo no DynamoDB: %s", json.dumps(item))
+        logger.info("Registro da inscrição com aceite de termos: %s", json.dumps({
+            "evento": "inscricao_realizada",
+            "timestamp": agora,
+            "ip": ip,
+            "userAgent": user_agent,
+            "nome": body['nomeCompleto'],
+            "email": body['email'],
+            "curso": body['curso'],
+            "aceitouTermos": True
+        }))
+
         table.put_item(Item=item)
         logger.info("Item salvo com sucesso no DynamoDB")
 
@@ -93,8 +108,11 @@ def enviar_para_telegram(inscricao):
 🏫 Onde estuda: {inscricao.get('ondeEstuda', '')}
 📣 Como soube: {inscricao['comoSoube']}
 👥 Amigo: {inscricao.get('nomeAmigo', '')}
+🛡️ Aceitou os termos: Sim
 🕒 Data: {inscricao['dataInscricao']}
-"""
+🖥️ IP / Navegador: {inscricao['ip']} / {inscricao['userAgent']}
+""".strip()
+
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     response = requests.post(url, json={
         'chat_id': TELEGRAM_CHAT_ID,

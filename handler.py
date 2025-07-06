@@ -103,7 +103,7 @@ def criar_cobranca_asaas(nome, email, telefone, valor):
 
     payload = {
         "customer": criar_cliente_asaas(nome, email, telefone),
-        "billingType": "UNDEFINED",  # cliente escolhe Pix ou Cartão
+        "billingType": "PIX",
         "value": valor,
         "dueDate": datetime.now().strftime("%Y-%m-%d"),
         "description": "Inscrição no curso",

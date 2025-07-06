@@ -44,12 +44,25 @@ def salvar_inscricao(event, context):
         user_agent = event.get('headers', {}).get('User-Agent', 'desconhecido')
 
         inscricao_id = str(uuid.uuid4())
+        external_ref = str(uuid.uuid4())
+
+        valor_curso = float(body['valor'])
+        payment_method = body.get('paymentMethod', 'PIX').upper()
+        nome_curso = body['curso']
+        nome_aluno = body['nomeCompleto']
+        cpf_aluno = body.get('cpf', '')
+
+        # cria link de pagamento no Asaas
+        payment_link = criar_paymentlink_asaas(
+            nome_curso, nome_aluno, cpf_aluno, valor_curso, payment_method, external_ref
+        )
 
         item = {
             'id': inscricao_id,
-            'curso': body['curso'],
-            'nomeCompleto': body['nomeCompleto'],
+            'curso': nome_curso,
+            'nomeCompleto': nome_aluno,
             'email': body['email'],
+            'cpf': cpf_aluno,
             'whatsapp': body['whatsapp'],
             'sexo': body['sexo'],
             'dataNascimento': body['dataNascimento'],
@@ -60,19 +73,18 @@ def salvar_inscricao(event, context):
             'dataInscricao': agora,
             'aceitouTermos': True,
             'ip': ip,
-            'userAgent': user_agent
+            'userAgent': user_agent,
+            'asaasPaymentLinkId': payment_link.get('id', ''),
+            'asaasPaymentLinkUrl': payment_link.get('url', ''),
+            'asaasExternalReference': external_ref,
+            'paymentMethod': payment_method
         }
 
-        # cria cobrança no Asaas
-        cobranca = criar_cobranca_asaas(body['nomeCompleto'], body['email'], body['whatsapp'], 199.99)
-        item['asaasPaymentId'] = cobranca.get('id', '')
-        item['asaasPaymentLink'] = cobranca.get('invoiceUrl', '')
-
         table.put_item(Item=item)
-        logger.info("Item salvo no DynamoDB e cobrança criada")
+        logger.info("Item salvo no DynamoDB e paymentLink criado")
 
         try:
-            enviar_para_telegram(item, cobranca.get('invoiceUrl', ''))
+            enviar_para_telegram(item)
         except Exception as err:
             logger.error("Erro ao enviar para o Telegram: %s", err)
 
@@ -80,8 +92,8 @@ def salvar_inscricao(event, context):
             'statusCode': 201,
             'headers': cors_headers(),
             'body': json.dumps({
-                'message': 'Inscrição e cobrança criadas com sucesso!',
-                'linkPagamento': cobranca.get('invoiceUrl', '')
+                'message': 'Inscrição e link de pagamento criados com sucesso!',
+                'linkPagamento': payment_link.get('url', '')
             })
         }
 
@@ -94,48 +106,50 @@ def salvar_inscricao(event, context):
         }
 
 
-def criar_cobranca_asaas(nome, email, telefone, valor):
-    logger.info(f"4p1: {ASAAS_API_KEY}")
+def criar_paymentlink_asaas(curso, aluno, cpf, valor, metodo, external_ref):
     headers = {
         "Content-Type": "application/json",
         "access_token": ASAAS_API_KEY
     }
 
-    payload = {
-        "customer": criar_cliente_asaas(nome, email, telefone),
-        "billingType": "PIX",
-        "value": valor,
-        "dueDate": datetime.now().strftime("%Y-%m-%d"),
-        "description": "Inscrição no curso",
-        "externalReference": str(uuid.uuid4())
-    }
+    nome = f"Inscrição: {curso}"
+    descricao = f"Inscrição: {curso}. Aluno(a): {aluno} - CPF: {cpf}"
 
-    logger.info(f"payload: {payload}")
+    if metodo == 'PIX':
+        payload = {
+            "name": nome,
+            "billingType": "PIX",
+            "chargeType": "DETACHED",
+            "value": valor,
+            "description": descricao,
+            "dueDateLimitDays": 2,
+            "externalReference": external_ref,
+            "notificationEnabled": True
+        }
+    elif metodo == 'CARTAO':
+        valor_com_taxa = round(valor * 1.08, 2)  # +8%
+        payload = {
+            "name": nome,
+            "billingType": "CREDIT_CARD",
+            "chargeType": "INSTALLMENT",
+            "value": valor_com_taxa,
+            "description": descricao,
+            "dueDateLimitDays": 7,
+            "maxInstallmentCount": 12,
+            "externalReference": external_ref,
+            "notificationEnabled": True
+        }
+    else:
+        raise ValueError(f"Método de pagamento inválido: {metodo}")
 
-    response = requests.post(f"{ASAAS_ENDPOINT}/payments", headers=headers, json=payload)
+    logger.info(f"Payload para Asaas: {payload}")
+
+    response = requests.post(f"{ASAAS_ENDPOINT}/paymentLinks", headers=headers, json=payload)
     response.raise_for_status()
     return response.json()
 
 
-def criar_cliente_asaas(nome, email, telefone):
-    headers = {
-        "Content-Type": "application/json",
-        "access_token": ASAAS_API_KEY
-    }
-
-    payload = {
-        "name": nome,
-        "email": email,
-        "phone": telefone
-    }
-
-    response = requests.post(f"{ASAAS_ENDPOINT}/customers", headers=headers, json=payload)
-    response.raise_for_status()
-    data = response.json()
-    return data.get("id")
-
-
-def enviar_para_telegram(inscricao, link_pagamento):
+def enviar_para_telegram(inscricao):
     mensagem = f"""
 📩 Nova inscrição recebida!
 
@@ -143,6 +157,7 @@ def enviar_para_telegram(inscricao, link_pagamento):
 👤 Nome: {inscricao['nomeCompleto']}
 📧 Email: {inscricao['email']}
 📱 WhatsApp: {inscricao['whatsapp']}
+🆔 CPF: {inscricao.get('cpf', '')}
 ⚧ Sexo: {inscricao['sexo']}
 🎂 Nascimento: {inscricao['dataNascimento']}
 🎓 Formação TI: {inscricao['formacaoTI']}
@@ -151,7 +166,8 @@ def enviar_para_telegram(inscricao, link_pagamento):
 👥 Amigo: {inscricao.get('nomeAmigo', '')}
 🛡️ Aceitou os termos: Sim
 🕒 Data: {inscricao['dataInscricao']}
-💳 Link de pagamento: {link_pagamento}
+💳 Método: {inscricao['paymentMethod']}
+🔗 Link pagamento: {inscricao['asaasPaymentLinkUrl']}
 🖥️ IP / Navegador: {inscricao['ip']} / {inscricao['userAgent']}
 """.strip()
 

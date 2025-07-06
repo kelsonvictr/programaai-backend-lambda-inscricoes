@@ -110,6 +110,8 @@ def criar_cobranca_asaas(nome, email, telefone, valor):
         "externalReference": str(uuid.uuid4())
     }
 
+    logger.info(f"payload: {payload}")
+
     response = requests.post(f"{ASAAS_ENDPOINT}/payments", headers=headers, json=payload)
     response.raise_for_status()
     return response.json()

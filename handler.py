@@ -14,6 +14,8 @@ table = dynamodb.Table('Inscricoes')
 
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
+ASAAS_API_KEY = os.environ.get('ASAAS_API_KEY')
+ASAAS_ENDPOINT = "https://www.asaas.com/api/v3"
 
 def salvar_inscricao(event, context):
     logger.info("Evento recebido: %s", json.dumps(event))
@@ -27,11 +29,10 @@ def salvar_inscricao(event, context):
 
     try:
         body_raw = event.get('body')
-        logger.info("Body recebido bruto: %s", body_raw)
         body = json.loads(body_raw)
 
         if body.get("website"):
-            logger.warning("Tentativa de bot detectada. Campo 'website' foi preenchido.")
+            logger.warning("Tentativa de bot detectada.")
             return {
                 'statusCode': 400,
                 'headers': cors_headers(),
@@ -42,8 +43,10 @@ def salvar_inscricao(event, context):
         ip = event.get('requestContext', {}).get('identity', {}).get('sourceIp', 'desconhecido')
         user_agent = event.get('headers', {}).get('User-Agent', 'desconhecido')
 
+        inscricao_id = str(uuid.uuid4())
+
         item = {
-            'id': str(uuid.uuid4()),
+            'id': inscricao_id,
             'curso': body['curso'],
             'nomeCompleto': body['nomeCompleto'],
             'email': body['email'],
@@ -60,30 +63,26 @@ def salvar_inscricao(event, context):
             'userAgent': user_agent
         }
 
-        logger.info("Registro da inscrição com aceite de termos: %s", json.dumps({
-            "evento": "inscricao_realizada",
-            "timestamp": agora,
-            "ip": ip,
-            "userAgent": user_agent,
-            "nome": body['nomeCompleto'],
-            "email": body['email'],
-            "curso": body['curso'],
-            "aceitouTermos": True
-        }))
+        # cria cobrança no Asaas
+        cobranca = criar_cobranca_asaas(body['nomeCompleto'], body['email'], body['whatsapp'], 199.99)
+        item['asaasPaymentId'] = cobranca.get('id', '')
+        item['asaasPaymentLink'] = cobranca.get('invoiceUrl', '')
 
         table.put_item(Item=item)
-        logger.info("Item salvo com sucesso no DynamoDB")
+        logger.info("Item salvo no DynamoDB e cobrança criada")
 
         try:
-            enviar_para_telegram(item)
-            logger.info("Mensagem enviada para o Telegram com sucesso")
+            enviar_para_telegram(item, cobranca.get('invoiceUrl', ''))
         except Exception as err:
-            logger.error("Erro ao enviar mensagem para o Telegram: %s", err)
+            logger.error("Erro ao enviar para o Telegram: %s", err)
 
         return {
             'statusCode': 201,
             'headers': cors_headers(),
-            'body': json.dumps({'message': 'Inscrição realizada com sucesso!'})
+            'body': json.dumps({
+                'message': 'Inscrição e cobrança criadas com sucesso!',
+                'linkPagamento': cobranca.get('invoiceUrl', '')
+            })
         }
 
     except Exception as e:
@@ -94,7 +93,46 @@ def salvar_inscricao(event, context):
             'body': json.dumps({'error': str(e)})
         }
 
-def enviar_para_telegram(inscricao):
+
+def criar_cobranca_asaas(nome, email, telefone, valor):
+    headers = {
+        "Content-Type": "application/json",
+        "access_token": ASAAS_API_KEY
+    }
+
+    payload = {
+        "customer": criar_cliente_asaas(nome, email, telefone),
+        "billingType": "UNDEFINED",  # cliente escolhe Pix ou Cartão
+        "value": valor,
+        "dueDate": datetime.now().strftime("%Y-%m-%d"),
+        "description": "Inscrição no curso",
+        "externalReference": str(uuid.uuid4())
+    }
+
+    response = requests.post(f"{ASAAS_ENDPOINT}/payments", headers=headers, json=payload)
+    response.raise_for_status()
+    return response.json()
+
+
+def criar_cliente_asaas(nome, email, telefone):
+    headers = {
+        "Content-Type": "application/json",
+        "access_token": ASAAS_API_KEY
+    }
+
+    payload = {
+        "name": nome,
+        "email": email,
+        "phone": telefone
+    }
+
+    response = requests.post(f"{ASAAS_ENDPOINT}/customers", headers=headers, json=payload)
+    response.raise_for_status()
+    data = response.json()
+    return data.get("id")
+
+
+def enviar_para_telegram(inscricao, link_pagamento):
     mensagem = f"""
 📩 Nova inscrição recebida!
 
@@ -110,6 +148,7 @@ def enviar_para_telegram(inscricao):
 👥 Amigo: {inscricao.get('nomeAmigo', '')}
 🛡️ Aceitou os termos: Sim
 🕒 Data: {inscricao['dataInscricao']}
+💳 Link de pagamento: {link_pagamento}
 🖥️ IP / Navegador: {inscricao['ip']} / {inscricao['userAgent']}
 """.strip()
 
@@ -119,6 +158,7 @@ def enviar_para_telegram(inscricao):
         'text': mensagem
     })
     logger.info("Resposta do Telegram: %s", response.text)
+
 
 def cors_headers():
     return {

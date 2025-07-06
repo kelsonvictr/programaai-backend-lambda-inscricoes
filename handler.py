@@ -95,7 +95,6 @@ def salvar_inscricao(event, context):
 
 
 def criar_cobranca_asaas(nome, email, telefone, valor):
-    logger.info(f"4p1: {ASAAS_API_KEY}")
     headers = {
         "Content-Type": "application/json",
         "access_token": ASAAS_API_KEY

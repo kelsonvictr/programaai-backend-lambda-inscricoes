@@ -41,6 +41,7 @@ jobs:
           echo "EMAIL_DESTINO=${{ secrets.EMAIL_DESTINO }}" >> $GITHUB_ENV
           echo "TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}" >> $GITHUB_ENV
           echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> $GITHUB_ENV
+          echo "ASAAS_API_KEY=${{ secrets.ASAAS_API_KEY }}" >> $GITHUB_ENV
 
       - name: Deploy with Serverless
         run: npx serverless deploy

@@ -42,5 +42,5 @@ jobs:
           export ASAAS_API_KEY="${{ secrets.ASAAS_API_KEY }}"
           export EMAIL_ORIGEM="${{ secrets.EMAIL_ORIGEM }}"
           export EMAIL_DESTINO="${{ secrets.EMAIL_DESTINO }}"
-          npx serverless deploy
+          npx serverless deploy --force
       

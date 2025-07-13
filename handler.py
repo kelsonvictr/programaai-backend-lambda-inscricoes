@@ -24,17 +24,18 @@ def salvar_inscricao(event, context):
     path = event.get("path", "")
     method = event.get("httpMethod", "")
 
-    logger.info(f"Path: {path} | Method: {method}")
+    logger.info(f"Path recebido: {path} | Method: {method}")
 
-    if path.startswith("/dev/admin"):
+    # Rotas admin
+    if "/admin" in path:
         api_key = event["headers"].get("x-api-key")
         if api_key != ADMIN_KEY:
             return resposta(403, {'error': 'Unauthorized'})
 
-        if path == "/dev/admin/inscricoes" and method == "GET":
+        if path.endswith("/admin/inscricoes") and method == "GET":
             return listar_inscricoes()
 
-        if path.startswith("/dev/admin/inscricoes/") and method == "DELETE":
+        if path.startswith("/admin/inscricoes/") and method == "DELETE":
             inscricao_id = path.split("/")[-1]
             return remover_inscricao(inscricao_id)
 
@@ -117,6 +118,7 @@ def salvar_inscricao(event, context):
 def listar_inscricoes():
     try:
         result = table.scan()
+        logger.info(f"Total inscrições encontradas: {len(result.get('Items', []))}")
         return resposta(200, result.get("Items", []))
     except Exception as e:
         logger.error("Erro ao listar: %s", e, exc_info=True)
@@ -125,6 +127,7 @@ def listar_inscricoes():
 def remover_inscricao(inscricao_id):
     try:
         table.delete_item(Key={'id': inscricao_id})
+        logger.info(f"Inscrição {inscricao_id} removida")
         return resposta(200, {'message': 'Inscrição removida com sucesso'})
     except Exception as e:
         logger.error("Erro ao remover: %s", e, exc_info=True)

@@ -27,6 +27,8 @@ provider:
         - Effect: Allow
           Action:
             - dynamodb:PutItem
+            - dynamodb:Scan
+            - dynamodb:DeleteItem
           Resource: "*"
 
 functions:

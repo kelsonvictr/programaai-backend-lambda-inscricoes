@@ -13,34 +13,43 @@ dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table('Inscricoes')
 ses = boto3.client('ses')
 
-ASAAS_API_KEY = os.environ.get('ASAAS')
+ASAAS_API_KEY = os.environ.get('ASAAS_API_KEY')
 ASAAS_ENDPOINT = "https://www.asaas.com/api/v3"
-ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL')
-REMETENTE = "no-reply@programaai.dev"
-LOGO_URL = "https://programaai.dev/assets/logo-BPg_3cKF.png"
-
+ADMIN_KEY = os.environ.get('ADMIN_KEY')
+REMETENTE = 'Programa AI <no-reply@programaai.dev>'
 
 def salvar_inscricao(event, context):
     logger.info("Evento recebido: %s", json.dumps(event))
 
-    if event.get('httpMethod') == 'OPTIONS':
-        return {
-            'statusCode': 200,
-            'headers': cors_headers(),
-            'body': json.dumps({'message': 'CORS OK'})
-        }
+    path = event.get("path", "")
+    method = event.get("httpMethod", "")
 
+    if path.startswith("/dev/admin"):
+        api_key = event["headers"].get("x-api-key")
+        if api_key != ADMIN_KEY:
+            return resposta(403, {'error': 'Unauthorized'})
+
+        if path == "/dev/admin/inscricoes" and method == "GET":
+            return listar_inscricoes()
+
+        if path.startswith("/dev/admin/inscricoes/") and method == "DELETE":
+            inscricao_id = path.split("/")[-1]
+            return remover_inscricao(inscricao_id)
+
+        return resposta(404, {'error': 'Admin route not found'})
+
+    # CORS
+    if event.get('httpMethod') == 'OPTIONS':
+        return resposta(200, {'message': 'CORS OK'})
+
+    # fluxo normal de inscrição
     try:
         body_raw = event.get('body')
         body = json.loads(body_raw)
 
         if body.get("website"):
             logger.warning("Tentativa de bot detectada.")
-            return {
-                'statusCode': 400,
-                'headers': cors_headers(),
-                'body': json.dumps({'error': 'Solicitação inválida.'})
-            }
+            return resposta(400, {'error': 'Solicitação inválida.'})
 
         agora = datetime.now(timezone(timedelta(hours=-3))).isoformat()
         ip = event.get('requestContext', {}).get('identity', {}).get('sourceIp', 'desconhecido')
@@ -54,8 +63,8 @@ def salvar_inscricao(event, context):
         nome_curso = body['curso']
         nome_aluno = body['nomeCompleto']
         cpf_aluno = body.get('cpf', '')
+        rg_aluno = body.get('rg', '')
 
-        # cria link de pagamento no Asaas
         payment_link = criar_paymentlink_asaas(
             nome_curso, nome_aluno, cpf_aluno, valor_curso, payment_method, external_ref
         )
@@ -64,8 +73,9 @@ def salvar_inscricao(event, context):
             'id': inscricao_id,
             'curso': nome_curso,
             'nomeCompleto': nome_aluno,
-            'email': body['email'],
             'cpf': cpf_aluno,
+            'rg': rg_aluno,
+            'email': body['email'],
             'whatsapp': body['whatsapp'],
             'sexo': body['sexo'],
             'dataNascimento': body['dataNascimento'],
@@ -84,31 +94,33 @@ def salvar_inscricao(event, context):
         }
 
         table.put_item(Item=item)
+
         logger.info("Item salvo no DynamoDB e paymentLink criado")
 
-        try:
-            enviar_email_para_aluno(item)
-            enviar_email_para_admin(item)
-        except Exception as err:
-            logger.error("Erro ao enviar emails: %s", err, exc_info=True)
-
-        return {
-            'statusCode': 201,
-            'headers': cors_headers(),
-            'body': json.dumps({
-                'message': 'Inscrição e link de pagamento criados com sucesso!',
-                'linkPagamento': payment_link.get('url', '')
-            })
-        }
+        return resposta(201, {
+            'message': 'Inscrição e link de pagamento criados com sucesso!',
+            'linkPagamento': payment_link.get('url', '')
+        })
 
     except Exception as e:
         logger.error("Erro inesperado: %s", e, exc_info=True)
-        return {
-            'statusCode': 500,
-            'headers': cors_headers(),
-            'body': json.dumps({'error': str(e)})
-        }
+        return resposta(500, {'error': str(e)})
 
+def listar_inscricoes():
+    try:
+        result = table.scan()
+        return resposta(200, result.get("Items", []))
+    except Exception as e:
+        logger.error("Erro ao listar: %s", e, exc_info=True)
+        return resposta(500, {'error': str(e)})
+
+def remover_inscricao(inscricao_id):
+    try:
+        table.delete_item(Key={'id': inscricao_id})
+        return resposta(200, {'message': 'Inscrição removida com sucesso'})
+    except Exception as e:
+        logger.error("Erro ao remover: %s", e, exc_info=True)
+        return resposta(500, {'error': str(e)})
 
 def criar_paymentlink_asaas(curso, aluno, cpf, valor, metodo, external_ref):
     headers = {
@@ -131,7 +143,7 @@ def criar_paymentlink_asaas(curso, aluno, cpf, valor, metodo, external_ref):
             "notificationEnabled": True
         }
     elif metodo == 'CARTAO':
-        valor_com_taxa = round(valor * 1.08, 2)  # +8%
+        valor_com_taxa = round(valor * 1.08, 2)
         payload = {
             "name": nome,
             "billingType": "CREDIT_CARD",
@@ -146,105 +158,21 @@ def criar_paymentlink_asaas(curso, aluno, cpf, valor, metodo, external_ref):
     else:
         raise ValueError(f"Método de pagamento inválido: {metodo}")
 
-    logger.info(f"Payload para Asaas: {payload}")
-
     response = requests.post(f"{ASAAS_ENDPOINT}/paymentLinks", headers=headers, json=payload)
     response.raise_for_status()
     return response.json()
 
-
-def enviar_email_para_aluno(inscricao):
-    subject = f"Inscrição confirmada: {inscricao['curso']}"
-
-    body_html = f"""
-<html>
-  <body>
-    <div style="text-align:center">
-      <img src="{LOGO_URL}" alt="Programa AI" style="max-width:200px; margin-bottom:20px;">
-    </div>
-
-    <p>Olá {inscricao['nomeCompleto']},</p>
-
-    <p>Parabéns! Sua inscrição no curso <strong>{inscricao['curso']}</strong> foi realizada com sucesso.</p>
-
-    <p>Segue o link para pagamento:</p>
-
-    <p><a href="{inscricao['asaasPaymentLinkUrl']}">{inscricao['asaasPaymentLinkUrl']}</a></p>
-
-    <p>Por favor, efetue o pagamento para garantir sua vaga.</p>
-
-    <p>Após a confirmação do pagamento, entraremos em contato com você e vamos te adicionar ao nosso <strong>grupo no WhatsApp</strong>, onde vamos soltar todas as novidades do curso! 📲</p>
-
-    <p>Atenciosamente,<br>Equipe Programa AI</p>
-  </body>
-</html>
-"""
-
-    ses.send_email(
-        Source=REMETENTE,
-        Destination={'ToAddresses': [inscricao['email']]},
-        Message={
-            'Subject': {'Data': subject, 'Charset': 'UTF-8'},
-            'Body': {
-                'Html': {'Data': body_html, 'Charset': 'UTF-8'}
-            }
-        }
-    )
-    logger.info("Email HTML enviado para aluno: %s", inscricao['email'])
-
-
-
-def enviar_email_para_admin(inscricao):
-    subject = f"Nova inscrição: {inscricao['curso']} - {inscricao['nomeCompleto']}"
-
-    body_html = f"""
-<html>
-  <body>
-    <div style="text-align:center">
-      <img src="{LOGO_URL}" alt="Programa AI" style="max-width:200px; margin-bottom:20px;">
-    </div>
-
-    <h3>Nova inscrição recebida!</h3>
-
-    <p><strong>Curso:</strong> {inscricao['curso']}</p>
-    <p><strong>Nome:</strong> {inscricao['nomeCompleto']}</p>
-    <p><strong>Email:</strong> {inscricao['email']}</p>
-    <p><strong>WhatsApp:</strong> {inscricao['whatsapp']}</p>
-    <p><strong>CPF:</strong> {inscricao.get('cpf', '')}</p>
-    <p><strong>Sexo:</strong> {inscricao['sexo']}</p>
-    <p><strong>Nascimento:</strong> {inscricao['dataNascimento']}</p>
-    <p><strong>Formação TI:</strong> {inscricao['formacaoTI']}</p>
-    <p><strong>Onde estuda:</strong> {inscricao.get('ondeEstuda', '')}</p>
-    <p><strong>Como soube:</strong> {inscricao['comoSoube']}</p>
-    <p><strong>Amigo:</strong> {inscricao.get('nomeAmigo', '')}</p>
-    <p><strong>Data:</strong> {inscricao['dataInscricao']}</p>
-    <p><strong>Método de pagamento:</strong> {inscricao['paymentMethod']}</p>
-    <p><strong>Link de pagamento:</strong> <a href="{inscricao['asaasPaymentLinkUrl']}">{inscricao['asaasPaymentLinkUrl']}</a></p>
-    <p><strong>IP / Navegador:</strong> {inscricao['ip']} / {inscricao['userAgent']}</p>
-
-    <p>— Programa AI</p>
-  </body>
-</html>
-"""
-
-    ses.send_email(
-        Source=REMETENTE,
-        Destination={'ToAddresses': [ADMIN_EMAIL]},
-        Message={
-            'Subject': {'Data': subject, 'Charset': 'UTF-8'},
-            'Body': {
-                'Html': {'Data': body_html, 'Charset': 'UTF-8'}
-            }
-        }
-    )
-    logger.info("Email HTML enviado para admin: %s", ADMIN_EMAIL)
-
-
+def resposta(status, body):
+    return {
+        'statusCode': status,
+        'headers': cors_headers(),
+        'body': json.dumps(body)
+    }
 
 def cors_headers():
     return {
-        'Access-Control-Allow-Origin': 'https://programaai.dev',
+        'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': '*',
-        'Access-Control-Allow-Methods': 'OPTIONS,POST',
+        'Access-Control-Allow-Methods': 'OPTIONS,GET,POST,DELETE',
         'Content-Type': 'application/json'
     }

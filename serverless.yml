@@ -20,6 +20,7 @@ provider:
     TELEGRAM_CHAT_ID: ${env:TELEGRAM_CHAT_ID}
     ASAAS: ${env:ASAAS}
     ADMIN_EMAIL: ${env:ADMIN_EMAIL}
+    ADMIN_KEY: ${env:ADMIN_KEY}
   iam:
     role:
       statements:

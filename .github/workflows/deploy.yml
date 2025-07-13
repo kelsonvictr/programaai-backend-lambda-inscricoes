@@ -43,5 +43,6 @@ jobs:
           export EMAIL_ORIGEM="${{ secrets.EMAIL_ORIGEM }}"
           export EMAIL_DESTINO="${{ secrets.EMAIL_DESTINO }}"
           export ADMIN_EMAIL="${{ secrets.ADMIN_EMAIL }}"
+          export ADMIN_KEY="${{ secrets.ADMIN_KEY }}"
           npx serverless deploy --force
       

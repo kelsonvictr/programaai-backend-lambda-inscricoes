@@ -34,6 +34,6 @@ functions:
     handler: handler.salvar_inscricao
     events:
       - http:
-          path: inscricao
-          method: post
+          path: '{proxy+}'
+          method: any
           cors: true

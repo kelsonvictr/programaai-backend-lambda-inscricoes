@@ -11,11 +11,16 @@ logger.setLevel(logging.INFO)
 
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table('Inscricoes')
+ses = boto3.client('ses')
 
-TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
-TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
+TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')  # não utilizado mais
+TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')  # não utilizado mais
 ASAAS_API_KEY = os.environ.get('ASAAS_API_KEY')
 ASAAS_ENDPOINT = "https://www.asaas.com/api/v3"
+ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL')  # <--- coloque seu gmail aqui nas variáveis de ambiente
+
+REMETENTE = "no-reply@programaai.dev"
+
 
 def salvar_inscricao(event, context):
     logger.info("Evento recebido: %s", json.dumps(event))
@@ -84,9 +89,10 @@ def salvar_inscricao(event, context):
         logger.info("Item salvo no DynamoDB e paymentLink criado")
 
         try:
-            enviar_para_telegram(item)
+            enviar_email_para_aluno(item)
+            enviar_email_para_admin(item)
         except Exception as err:
-            logger.error("Erro ao enviar para o Telegram: %s", err)
+            logger.error("Erro ao enviar emails: %s", err, exc_info=True)
 
         return {
             'statusCode': 201,
@@ -149,10 +155,36 @@ def criar_paymentlink_asaas(curso, aluno, cpf, valor, metodo, external_ref):
     return response.json()
 
 
-def enviar_para_telegram(inscricao):
-    mensagem = f"""
-📩 Nova inscrição recebida!
+def enviar_email_para_aluno(inscricao):
+    subject = f"Inscrição confirmada: {inscricao['curso']}"
+    body = f"""
+Olá {inscricao['nomeCompleto']},
 
+Parabéns! Sua inscrição no curso {inscricao['curso']} foi realizada com sucesso.
+
+Segue o link para pagamento:
+{inscricao['asaasPaymentLinkUrl']}
+
+Por favor, efetue o pagamento para garantir sua vaga.
+
+Atenciosamente,
+Equipe Programa AI
+"""
+
+    ses.send_email(
+        Source=REMETENTE,
+        Destination={'ToAddresses': [inscricao['email']]},
+        Message={
+            'Subject': {'Data': subject, 'Charset': 'UTF-8'},
+            'Body': {'Text': {'Data': body, 'Charset': 'UTF-8'}}
+        }
+    )
+    logger.info("Email enviado para aluno: %s", inscricao['email'])
+
+
+def enviar_email_para_admin(inscricao):
+    subject = f"Nova inscrição: {inscricao['curso']} - {inscricao['nomeCompleto']}"
+    body = f"""
 📚 Curso: {inscricao['curso']}
 👤 Nome: {inscricao['nomeCompleto']}
 📧 Email: {inscricao['email']}
@@ -169,14 +201,17 @@ def enviar_para_telegram(inscricao):
 💳 Método: {inscricao['paymentMethod']}
 🔗 Link pagamento: {inscricao['asaasPaymentLinkUrl']}
 🖥️ IP / Navegador: {inscricao['ip']} / {inscricao['userAgent']}
-""".strip()
+"""
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    response = requests.post(url, json={
-        'chat_id': TELEGRAM_CHAT_ID,
-        'text': mensagem
-    })
-    logger.info("Resposta do Telegram: %s", response.text)
+    ses.send_email(
+        Source=REMETENTE,
+        Destination={'ToAddresses': [ADMIN_EMAIL]},
+        Message={
+            'Subject': {'Data': subject, 'Charset': 'UTF-8'},
+            'Body': {'Text': {'Data': body, 'Charset': 'UTF-8'}}
+        }
+    )
+    logger.info("Email enviado para admin: %s", ADMIN_EMAIL)
 
 
 def cors_headers():

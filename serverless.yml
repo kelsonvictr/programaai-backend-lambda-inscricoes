@@ -19,7 +19,7 @@ provider:
     TELEGRAM_TOKEN: ${env:TELEGRAM_TOKEN}
     TELEGRAM_CHAT_ID: ${env:TELEGRAM_CHAT_ID}
     ASAAS_API_KEY: ${env:ASAAS_API_KEY}
-
+    ADMIN_EMAIL: ${env:ADMIN_EMAIL}
   iam:
     role:
       statements:

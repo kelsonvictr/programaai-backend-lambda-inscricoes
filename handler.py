@@ -6,6 +6,9 @@ import requests
 import logging
 from datetime import datetime, timedelta, timezone
 
+import firebase_admin
+from firebase_admin import auth, credentials
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -15,27 +18,33 @@ ses = boto3.client('ses')
 
 ASAAS_API_KEY = os.environ.get('ASAAS')
 ASAAS_ENDPOINT = "https://www.asaas.com/api/v3"
-ADMIN_KEY = os.environ.get('ADMIN_KEY')
 REMETENTE = 'Programa AI <no-reply@programaai.dev>'
+
+# Inicializa Firebase Admin uma única vez
+if not firebase_admin._apps:
+    firebase_admin.initialize_app()
 
 def salvar_inscricao(event, context):
     logger.info("Evento recebido: %s", json.dumps(event))
 
     path = event.get("path", "")
     method = event.get("httpMethod", "")
-
     logger.info(f"Path recebido: {path} | Method: {method}")
 
     # Rotas admin
-    if "/admin" in path:
-        api_key = event["headers"].get("x-api-key")
-        if api_key != ADMIN_KEY:
-            return resposta(403, {'error': 'Unauthorized'})
+    if "/galaxy" in path:
+        try:
+            auth_header = event["headers"].get("Authorization", "")
+            uid, email = validar_jwt(auth_header)
+            logger.info(f"Usuário autenticado: {email} ({uid})")
+        except Exception as e:
+            logger.error(f"Falha na autenticação: {e}")
+            return resposta(401, {'error': 'Unauthorized'})
 
-        if path.endswith("/admin/inscricoes") and method == "GET":
+        if path.endswith("/galaxy/inscricoes") and method == "GET":
             return listar_inscricoes()
 
-        if path.startswith("/admin/inscricoes/") and method == "DELETE":
+        if path.startswith("/galaxy/inscricoes/") and method == "DELETE":
             inscricao_id = path.split("/")[-1]
             return remover_inscricao(inscricao_id)
 
@@ -172,6 +181,19 @@ def criar_paymentlink_asaas(curso, aluno, cpf, valor, metodo, external_ref):
     response = requests.post(f"{ASAAS_ENDPOINT}/paymentLinks", headers=headers, json=payload)
     response.raise_for_status()
     return response.json()
+
+def validar_jwt(authorization_header):
+    if not authorization_header:
+        raise Exception("Authorization header missing")
+    parts = authorization_header.split()
+    if len(parts) != 2 or parts[0] != "Bearer":
+        raise Exception("Invalid authorization header")
+
+    token = parts[1]
+    decoded_token = auth.verify_id_token(token)
+    uid = decoded_token['uid']
+    email = decoded_token.get('email')
+    return uid, email
 
 def resposta(status, body):
     return {

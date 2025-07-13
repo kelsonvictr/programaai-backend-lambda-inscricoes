@@ -24,6 +24,8 @@ def salvar_inscricao(event, context):
     path = event.get("path", "")
     method = event.get("httpMethod", "")
 
+    logger.info(f"Path: {path} | Method: {method}")
+
     if path.startswith("/dev/admin"):
         api_key = event["headers"].get("x-api-key")
         if api_key != ADMIN_KEY:
@@ -39,72 +41,78 @@ def salvar_inscricao(event, context):
         return resposta(404, {'error': 'Admin route not found'})
 
     # CORS
-    if event.get('httpMethod') == 'OPTIONS':
+    if method == 'OPTIONS':
         return resposta(200, {'message': 'CORS OK'})
 
-    # fluxo normal de inscrição
-    try:
-        body_raw = event.get('body')
-        body = json.loads(body_raw)
+    # fluxo normal de inscrição (POST /inscricao)
+    if path.endswith("/inscricao") and method == "POST":
+        try:
+            body_raw = event.get('body')
+            if not body_raw:
+                return resposta(400, {'error': 'Body is required'})
 
-        if body.get("website"):
-            logger.warning("Tentativa de bot detectada.")
-            return resposta(400, {'error': 'Solicitação inválida.'})
+            body = json.loads(body_raw)
 
-        agora = datetime.now(timezone(timedelta(hours=-3))).isoformat()
-        ip = event.get('requestContext', {}).get('identity', {}).get('sourceIp', 'desconhecido')
-        user_agent = event.get('headers', {}).get('User-Agent', 'desconhecido')
+            if body.get("website"):
+                logger.warning("Tentativa de bot detectada.")
+                return resposta(400, {'error': 'Solicitação inválida.'})
 
-        inscricao_id = str(uuid.uuid4())
-        external_ref = str(uuid.uuid4())
+            agora = datetime.now(timezone(timedelta(hours=-3))).isoformat()
+            ip = event.get('requestContext', {}).get('identity', {}).get('sourceIp', 'desconhecido')
+            user_agent = event.get('headers', {}).get('User-Agent', 'desconhecido')
 
-        valor_curso = float(body['valor'])
-        payment_method = body.get('paymentMethod', 'PIX').upper()
-        nome_curso = body['curso']
-        nome_aluno = body['nomeCompleto']
-        cpf_aluno = body.get('cpf', '')
-        rg_aluno = body.get('rg', '')
+            inscricao_id = str(uuid.uuid4())
+            external_ref = str(uuid.uuid4())
 
-        payment_link = criar_paymentlink_asaas(
-            nome_curso, nome_aluno, cpf_aluno, valor_curso, payment_method, external_ref
-        )
+            valor_curso = float(body['valor'])
+            payment_method = body.get('paymentMethod', 'PIX').upper()
+            nome_curso = body['curso']
+            nome_aluno = body['nomeCompleto']
+            cpf_aluno = body.get('cpf', '')
+            rg_aluno = body.get('rg', '')
 
-        item = {
-            'id': inscricao_id,
-            'curso': nome_curso,
-            'nomeCompleto': nome_aluno,
-            'cpf': cpf_aluno,
-            'rg': rg_aluno,
-            'email': body['email'],
-            'whatsapp': body['whatsapp'],
-            'sexo': body['sexo'],
-            'dataNascimento': body['dataNascimento'],
-            'formacaoTI': body['formacaoTI'],
-            'ondeEstuda': body.get('ondeEstuda', ''),
-            'comoSoube': body['comoSoube'],
-            'nomeAmigo': body.get('nomeAmigo', ''),
-            'dataInscricao': agora,
-            'aceitouTermos': True,
-            'ip': ip,
-            'userAgent': user_agent,
-            'asaasPaymentLinkId': payment_link.get('id', ''),
-            'asaasPaymentLinkUrl': payment_link.get('url', ''),
-            'asaasExternalReference': external_ref,
-            'paymentMethod': payment_method
-        }
+            payment_link = criar_paymentlink_asaas(
+                nome_curso, nome_aluno, cpf_aluno, valor_curso, payment_method, external_ref
+            )
 
-        table.put_item(Item=item)
+            item = {
+                'id': inscricao_id,
+                'curso': nome_curso,
+                'nomeCompleto': nome_aluno,
+                'cpf': cpf_aluno,
+                'rg': rg_aluno,
+                'email': body['email'],
+                'whatsapp': body['whatsapp'],
+                'sexo': body['sexo'],
+                'dataNascimento': body['dataNascimento'],
+                'formacaoTI': body['formacaoTI'],
+                'ondeEstuda': body.get('ondeEstuda', ''),
+                'comoSoube': body['comoSoube'],
+                'nomeAmigo': body.get('nomeAmigo', ''),
+                'dataInscricao': agora,
+                'aceitouTermos': True,
+                'ip': ip,
+                'userAgent': user_agent,
+                'asaasPaymentLinkId': payment_link.get('id', ''),
+                'asaasPaymentLinkUrl': payment_link.get('url', ''),
+                'asaasExternalReference': external_ref,
+                'paymentMethod': payment_method
+            }
 
-        logger.info("Item salvo no DynamoDB e paymentLink criado")
+            table.put_item(Item=item)
 
-        return resposta(201, {
-            'message': 'Inscrição e link de pagamento criados com sucesso!',
-            'linkPagamento': payment_link.get('url', '')
-        })
+            logger.info("Item salvo no DynamoDB e paymentLink criado")
 
-    except Exception as e:
-        logger.error("Erro inesperado: %s", e, exc_info=True)
-        return resposta(500, {'error': str(e)})
+            return resposta(201, {
+                'message': 'Inscrição e link de pagamento criados com sucesso!',
+                'linkPagamento': payment_link.get('url', '')
+            })
+
+        except Exception as e:
+            logger.error("Erro inesperado: %s", e, exc_info=True)
+            return resposta(500, {'error': str(e)})
+
+    return resposta(404, {'error': 'Route not found'})
 
 def listar_inscricoes():
     try:

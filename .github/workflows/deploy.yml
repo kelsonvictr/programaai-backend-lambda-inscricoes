@@ -44,5 +44,7 @@ jobs:
           export EMAIL_DESTINO="${{ secrets.EMAIL_DESTINO }}"
           export ADMIN_EMAIL="${{ secrets.ADMIN_EMAIL }}"
           export ADMIN_KEY="${{ secrets.ADMIN_KEY }}"
+          export FIREBASE_BUCKET="${{ secrets.FIREBASE_BUCKET }}"
+          export FIREBASE_KEY_PATH="${{ secrets.FIREBASE_KEY_PATH }}"
           npx serverless deploy --force
       

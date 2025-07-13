@@ -15,14 +15,24 @@ logger.setLevel(logging.INFO)
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table('Inscricoes')
 ses = boto3.client('ses')
+s3 = boto3.client('s3')
 
 ASAAS_API_KEY = os.environ.get('ASAAS')
 ASAAS_ENDPOINT = "https://www.asaas.com/api/v3"
 REMETENTE = 'Programa AI <no-reply@programaai.dev>'
 
-# Inicializa Firebase Admin uma única vez
-if not firebase_admin._apps:
-    firebase_admin.initialize_app()
+FIREBASE_BUCKET = os.environ.get('FIREBASE_BUCKET')
+FIREBASE_KEY_PATH = os.environ.get('FIREBASE_KEY_PATH')
+
+def init_firebase():
+    if not firebase_admin._apps:
+        logger.info(f"Carregando chave Firebase do bucket {FIREBASE_BUCKET}/{FIREBASE_KEY_PATH}")
+        obj = s3.get_object(Bucket=FIREBASE_BUCKET, Key=FIREBASE_KEY_PATH)
+        json_key = json.load(obj['Body'])
+        cred = credentials.Certificate(json_key)
+        firebase_admin.initialize_app(cred)
+
+init_firebase()
 
 def salvar_inscricao(event, context):
     logger.info("Evento recebido: %s", json.dumps(event))
@@ -31,7 +41,6 @@ def salvar_inscricao(event, context):
     method = event.get("httpMethod", "")
     logger.info(f"Path recebido: {path} | Method: {method}")
 
-    # Rotas admin
     if "/galaxy" in path:
         try:
             auth_header = event["headers"].get("Authorization", "")
@@ -50,11 +59,9 @@ def salvar_inscricao(event, context):
 
         return resposta(404, {'error': 'Admin route not found'})
 
-    # CORS
     if method == 'OPTIONS':
         return resposta(200, {'message': 'CORS OK'})
 
-    # fluxo normal de inscrição (POST /inscricao)
     if path.endswith("/inscricao") and method == "POST":
         try:
             body_raw = event.get('body')

@@ -17,6 +17,7 @@ ASAAS_API_KEY = os.environ.get('ASAAS')
 ASAAS_ENDPOINT = "https://www.asaas.com/api/v3"
 ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL')
 REMETENTE = "no-reply@programaai.dev"
+LOGO_URL = "https://programaai.dev/assets/logo-BPg_3cKF.png"
 
 
 def salvar_inscricao(event, context):
@@ -154,18 +155,29 @@ def criar_paymentlink_asaas(curso, aluno, cpf, valor, metodo, external_ref):
 
 def enviar_email_para_aluno(inscricao):
     subject = f"Inscrição confirmada: {inscricao['curso']}"
-    body = f"""
-Olá {inscricao['nomeCompleto']},
 
-Parabéns! Sua inscrição no curso {inscricao['curso']} foi realizada com sucesso.
+    body_html = f"""
+<html>
+  <body>
+    <div style="text-align:center">
+      <img src="{LOGO_URL}" alt="Programa AI" style="max-width:200px; margin-bottom:20px;">
+    </div>
 
-Segue o link para pagamento:
-{inscricao['asaasPaymentLinkUrl']}
+    <p>Olá {inscricao['nomeCompleto']},</p>
 
-Por favor, efetue o pagamento para garantir sua vaga.
+    <p>Parabéns! Sua inscrição no curso <strong>{inscricao['curso']}</strong> foi realizada com sucesso.</p>
 
-Atenciosamente,
-Equipe Programa AI
+    <p>Segue o link para pagamento:</p>
+
+    <p><a href="{inscricao['asaasPaymentLinkUrl']}">{inscricao['asaasPaymentLinkUrl']}</a></p>
+
+    <p>Por favor, efetue o pagamento para garantir sua vaga.</p>
+
+    <p>Após a confirmação do pagamento, entraremos em contato com você e vamos te adicionar ao nosso <strong>grupo no WhatsApp</strong>, onde vamos soltar todas as novidades do curso! 📲</p>
+
+    <p>Atenciosamente,<br>Equipe Programa AI</p>
+  </body>
+</html>
 """
 
     ses.send_email(
@@ -173,31 +185,46 @@ Equipe Programa AI
         Destination={'ToAddresses': [inscricao['email']]},
         Message={
             'Subject': {'Data': subject, 'Charset': 'UTF-8'},
-            'Body': {'Text': {'Data': body, 'Charset': 'UTF-8'}}
+            'Body': {
+                'Html': {'Data': body_html, 'Charset': 'UTF-8'}
+            }
         }
     )
-    logger.info("Email enviado para aluno: %s", inscricao['email'])
+    logger.info("Email HTML enviado para aluno: %s", inscricao['email'])
+
 
 
 def enviar_email_para_admin(inscricao):
     subject = f"Nova inscrição: {inscricao['curso']} - {inscricao['nomeCompleto']}"
-    body = f"""
-📚 Curso: {inscricao['curso']}
-👤 Nome: {inscricao['nomeCompleto']}
-📧 Email: {inscricao['email']}
-📱 WhatsApp: {inscricao['whatsapp']}
-🆔 CPF: {inscricao.get('cpf', '')}
-⚧ Sexo: {inscricao['sexo']}
-🎂 Nascimento: {inscricao['dataNascimento']}
-🎓 Formação TI: {inscricao['formacaoTI']}
-🏫 Onde estuda: {inscricao.get('ondeEstuda', '')}
-📣 Como soube: {inscricao['comoSoube']}
-👥 Amigo: {inscricao.get('nomeAmigo', '')}
-🛡️ Aceitou os termos: Sim
-🕒 Data: {inscricao['dataInscricao']}
-💳 Método: {inscricao['paymentMethod']}
-🔗 Link pagamento: {inscricao['asaasPaymentLinkUrl']}
-🖥️ IP / Navegador: {inscricao['ip']} / {inscricao['userAgent']}
+
+    body_html = f"""
+<html>
+  <body>
+    <div style="text-align:center">
+      <img src="{LOGO_URL}" alt="Programa AI" style="max-width:200px; margin-bottom:20px;">
+    </div>
+
+    <h3>Nova inscrição recebida!</h3>
+
+    <p><strong>Curso:</strong> {inscricao['curso']}</p>
+    <p><strong>Nome:</strong> {inscricao['nomeCompleto']}</p>
+    <p><strong>Email:</strong> {inscricao['email']}</p>
+    <p><strong>WhatsApp:</strong> {inscricao['whatsapp']}</p>
+    <p><strong>CPF:</strong> {inscricao.get('cpf', '')}</p>
+    <p><strong>Sexo:</strong> {inscricao['sexo']}</p>
+    <p><strong>Nascimento:</strong> {inscricao['dataNascimento']}</p>
+    <p><strong>Formação TI:</strong> {inscricao['formacaoTI']}</p>
+    <p><strong>Onde estuda:</strong> {inscricao.get('ondeEstuda', '')}</p>
+    <p><strong>Como soube:</strong> {inscricao['comoSoube']}</p>
+    <p><strong>Amigo:</strong> {inscricao.get('nomeAmigo', '')}</p>
+    <p><strong>Data:</strong> {inscricao['dataInscricao']}</p>
+    <p><strong>Método de pagamento:</strong> {inscricao['paymentMethod']}</p>
+    <p><strong>Link de pagamento:</strong> <a href="{inscricao['asaasPaymentLinkUrl']}">{inscricao['asaasPaymentLinkUrl']}</a></p>
+    <p><strong>IP / Navegador:</strong> {inscricao['ip']} / {inscricao['userAgent']}</p>
+
+    <p>— Programa AI</p>
+  </body>
+</html>
 """
 
     ses.send_email(
@@ -205,10 +232,13 @@ def enviar_email_para_admin(inscricao):
         Destination={'ToAddresses': [ADMIN_EMAIL]},
         Message={
             'Subject': {'Data': subject, 'Charset': 'UTF-8'},
-            'Body': {'Text': {'Data': body, 'Charset': 'UTF-8'}}
+            'Body': {
+                'Html': {'Data': body_html, 'Charset': 'UTF-8'}
+            }
         }
     )
-    logger.info("Email enviado para admin: %s", ADMIN_EMAIL)
+    logger.info("Email HTML enviado para admin: %s", ADMIN_EMAIL)
+
 
 
 def cors_headers():

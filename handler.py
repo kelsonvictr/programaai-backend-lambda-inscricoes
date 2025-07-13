@@ -13,7 +13,7 @@ dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table('Inscricoes')
 ses = boto3.client('ses')
 
-ASAAS_API_KEY = os.environ.get('ASAAS_API_KEY')
+ASAAS_API_KEY = os.environ.get('ASAAS')
 ASAAS_ENDPOINT = "https://www.asaas.com/api/v3"
 ADMIN_KEY = os.environ.get('ADMIN_KEY')
 REMETENTE = 'Programa AI <no-reply@programaai.dev>'

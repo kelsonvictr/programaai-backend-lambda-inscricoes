@@ -13,12 +13,9 @@ dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table('Inscricoes')
 ses = boto3.client('ses')
 
-TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')  # não utilizado mais
-TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')  # não utilizado mais
 ASAAS_API_KEY = os.environ.get('ASAAS_API_KEY')
 ASAAS_ENDPOINT = "https://www.asaas.com/api/v3"
-ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL')  # <--- coloque seu gmail aqui nas variáveis de ambiente
-
+ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL')
 REMETENTE = "no-reply@programaai.dev"
 
 

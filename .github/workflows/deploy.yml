@@ -39,7 +39,7 @@ jobs:
         run: |
           export TELEGRAM_TOKEN="${{ secrets.TELEGRAM_TOKEN }}"
           export TELEGRAM_CHAT_ID="${{ secrets.TELEGRAM_CHAT_ID }}"
-          export ASAAS_API_KEY="${{ secrets.ASAAS_API_KEY }}"
+          export ASAAS="${{ secrets.ASAAS }}"
           export EMAIL_ORIGEM="${{ secrets.EMAIL_ORIGEM }}"
           export EMAIL_DESTINO="${{ secrets.EMAIL_DESTINO }}"
           export ADMIN_EMAIL="${{ secrets.ADMIN_EMAIL }}"

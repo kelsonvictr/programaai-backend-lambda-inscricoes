@@ -75,6 +75,15 @@ def salvar_inscricao(event, context):
                 logger.warning("Tentativa de bot detectada.")
                 return resposta(400, {'error': 'Solicitação inválida.'})
 
+            cpf_aluno = body.get('cpf', '')
+            nome_curso = body['curso']
+
+            # Verificar duplicidade
+            if verificar_inscricao_existente(cpf_aluno, nome_curso):
+                return resposta(409, {
+                    'error': f"O aluno com CPF {cpf_aluno} já está inscrito no curso {nome_curso}."
+                })
+
             agora = datetime.now(timezone(timedelta(hours=-3))).isoformat()
             ip = event.get('requestContext', {}).get('identity', {}).get('sourceIp', 'desconhecido')
             user_agent = event.get('headers', {}).get('User-Agent', 'desconhecido')
@@ -84,9 +93,7 @@ def salvar_inscricao(event, context):
 
             valor_curso = float(body['valor'])
             payment_method = body.get('paymentMethod', 'PIX').upper()
-            nome_curso = body['curso']
             nome_aluno = body['nomeCompleto']
-            cpf_aluno = body.get('cpf', '')
             rg_aluno = body.get('rg', '')
 
             payment_link = criar_paymentlink_asaas(
@@ -136,6 +143,27 @@ def salvar_inscricao(event, context):
             return resposta(500, {'error': str(e)})
 
     return resposta(404, {'error': 'Route not found'})
+
+def verificar_inscricao_existente(cpf, curso):
+    """
+    Retorna True se já existe uma inscrição para o mesmo CPF + curso.
+    """
+    try:
+        response = table.scan(
+            FilterExpression='cpf = :cpf_val AND curso = :curso_val',
+            ExpressionAttributeValues={
+                ':cpf_val': cpf,
+                ':curso_val': curso
+            }
+        )
+        items = response.get('Items', [])
+        if items:
+            logger.info(f"Inscrição já existente para CPF {cpf} no curso {curso}")
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"Erro ao verificar duplicidade: {e}", exc_info=True)
+        return False
 
 def listar_inscricoes():
     try:

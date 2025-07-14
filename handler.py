@@ -23,6 +23,7 @@ REMETENTE = 'Programa AI <no-reply@programaai.dev>'
 
 FIREBASE_BUCKET = os.environ.get('FIREBASE_BUCKET')
 FIREBASE_KEY_PATH = os.environ.get('FIREBASE_KEY_PATH')
+ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL')
 
 def init_firebase():
     if not firebase_admin._apps:
@@ -117,8 +118,13 @@ def salvar_inscricao(event, context):
             }
 
             table.put_item(Item=item)
-
             logger.info("Item salvo no DynamoDB e paymentLink criado")
+
+            try:
+                enviar_email_para_aluno(item)
+                enviar_email_para_admin(item)
+            except Exception as err:
+                logger.error(f"Falha ao enviar e-mails: {err}")
 
             return resposta(201, {
                 'message': 'Inscrição e link de pagamento criados com sucesso!',
@@ -201,6 +207,69 @@ def validar_jwt(authorization_header):
     uid = decoded_token['uid']
     email = decoded_token.get('email')
     return uid, email
+
+def enviar_email_para_aluno(inscricao):
+    logger.info(f"Enviando e-mail para aluno {inscricao['email']}")
+
+    assunto = f"Inscrição confirmada: {inscricao['curso']}"
+    corpo_html = f"""
+    <div style="font-family: Arial, sans-serif; color: #333;">
+      <img src="https://programaai.dev/assets/logo-BPg_3cKF.png" alt="Programa AI" style="height: 50px; margin-bottom: 20px;" />
+      <h2>Inscrição confirmada 🎉</h2>
+      <p>Olá <strong>{inscricao['nomeCompleto']}</strong>, obrigado por se inscrever no curso <strong>{inscricao['curso']}</strong>!</p>
+      <p>Para confirmar sua inscrição, por favor realize o pagamento clicando no link abaixo:</p>
+      <p><a href="{inscricao['asaasPaymentLinkUrl']}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Clique aqui para pagar</a></p>
+      <p>Após a confirmação do pagamento, entraremos em contato e adicionaremos você ao nosso grupo no WhatsApp onde soltamos todas as novidades do curso.</p>
+      <br/>
+      <p>Equipe <strong>Programa AI</strong></p>
+    </div>
+    """
+
+    ses.send_email(
+        Source=REMETENTE,
+        Destination={'ToAddresses': [inscricao['email']]},
+        Message={
+            'Subject': {'Data': assunto},
+            'Body': {'Html': {'Data': corpo_html}}
+        }
+    )
+
+def enviar_email_para_admin(inscricao):
+    logger.info("Enviando e-mail para admin")
+
+    assunto = f"Nova inscrição: {inscricao['curso']} - {inscricao['nomeCompleto']}"
+    corpo_html = f"""
+    <div style="font-family: Arial, sans-serif; color: #333;">
+      <img src="https://programaai.dev/assets/logo-BPg_3cKF.png" alt="Programa AI" style="height: 50px; margin-bottom: 20px;" />
+      <h2>Nova inscrição recebida</h2>
+      <p><strong>Curso:</strong> {inscricao['curso']}</p>
+      <p><strong>Nome:</strong> {inscricao['nomeCompleto']}</p>
+      <p><strong>E-mail:</strong> {inscricao['email']}</p>
+      <p><strong>WhatsApp:</strong> {inscricao['whatsapp']}</p>
+      <p><strong>CPF:</strong> {inscricao['cpf']}</p>
+      <p><strong>RG:</strong> {inscricao['rg']}</p>
+      <p><strong>Sexo:</strong> {inscricao['sexo']}</p>
+      <p><strong>Data de nascimento:</strong> {inscricao['dataNascimento']}</p>
+      <p><strong>Formação TI:</strong> {inscricao['formacaoTI']}</p>
+      <p><strong>Onde estuda:</strong> {inscricao.get('ondeEstuda', '')}</p>
+      <p><strong>Como soube:</strong> {inscricao['comoSoube']}</p>
+      <p><strong>Amigo:</strong> {inscricao.get('nomeAmigo', '')}</p>
+      <p><strong>IP / UserAgent:</strong> {inscricao['ip']} / {inscricao['userAgent']}</p>
+      <p><strong>Método de pagamento:</strong> {inscricao['paymentMethod']}</p>
+      <p><strong>Link pagamento:</strong> <a href="{inscricao['asaasPaymentLinkUrl']}">{inscricao['asaasPaymentLinkUrl']}</a></p>
+      <br/>
+      <p>Equipe <strong>Programa AI</strong></p>
+    </div>
+    """
+
+    ses.send_email(
+        Source=REMETENTE,
+        Destination={'ToAddresses': [ADMIN_EMAIL]},
+        Message={
+            'Subject': {'Data': assunto},
+            'Body': {'Html': {'Data': corpo_html}}
+        }
+    )
 
 def resposta(status, body):
     return {

@@ -66,10 +66,11 @@ def salvar_inscricao(event, context):
             nome = body.get("nome")
             email = body.get("email")
             whatsapp = body.get("whatsapp")
-            interesse = body.get("interesse", [])
+            aceita_contato = body.get("aceitaContato")
+            interesse = body.get("interesses", [])
 
-            if not nome or not email:
-                return resposta(400, {"error": "Nome e email são obrigatórios."})
+            if not nome or not email or not aceita_contato:
+                return resposta(400, {"error": "Nome, email e aceita contato são obrigatórios."})
 
             agora = datetime.now(timezone(timedelta(hours=-3))).isoformat()
             interesse_id = str(uuid.uuid4())

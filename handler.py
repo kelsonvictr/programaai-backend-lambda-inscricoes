@@ -81,6 +81,7 @@ def salvar_inscricao(event, context):
                 "email": email,
                 "whatsapp": whatsapp,
                 "interesse": interesse,
+                "aceita_contato": aceita_contato,
                 "dataCadastro": agora
             }
 

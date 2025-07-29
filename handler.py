@@ -15,7 +15,7 @@ logger.setLevel(logging.INFO)
 # DynamoDB
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table('Inscricoes')
-table_interesse = dynamodb.Table('ListaInteresse')  # nova tabela
+table_interesse = dynamodb.Table('ListaInteresse')
 
 # Clientes AWS
 ses = boto3.client('ses')
@@ -135,7 +135,7 @@ def salvar_inscricao(event, context):
 def enviar_email_boas_vindas_clube(item):
     logger.info(f"Enviando e-mail de boas-vindas para {item['email']}")
 
-    assunto = "🎉 Bem-vindo ao Clube Programa AI!"
+    assunto = "🎉 Bem-vindo ao Clube programa AI!"
     corpo_html = f"""
     <div style="font-family: Arial, sans-serif; color: #333;">
       <img src="https://programaai.dev/assets/logo-BPg_3cKF.png" alt="Programa AI" style="height: 50px; margin-bottom: 20px;" />
@@ -160,7 +160,7 @@ def enviar_email_boas_vindas_clube(item):
 def enviar_email_admin_clube(item):
     logger.info("Enviando e-mail para admin sobre novo membro do clube")
 
-    assunto = f"Novo cadastro no Clube Programa AI: {item['nome']}"
+    assunto = f"Novo cadastro no Clube programa AI: {item['nome']}"
     corpo_html = f"""
     <div style="font-family: Arial, sans-serif; color: #333;">
       <h2>Novo cadastro no Clube Programa AI</h2>

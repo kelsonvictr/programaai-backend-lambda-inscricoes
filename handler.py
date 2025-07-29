@@ -72,6 +72,10 @@ def salvar_inscricao(event, context):
             if not nome or not email or not aceita_contato:
                 return resposta(400, {"error": "Nome, email e aceita contato são obrigatórios."})
 
+            # Verificação de duplicidade
+            if verificar_interesse_existente(email):
+                return resposta(409, {"error": f"O e-mail {email} já está cadastrado no Clube programa AI."})
+
             agora = datetime.now(timezone(timedelta(hours=-3))).isoformat()
             interesse_id = str(uuid.uuid4())
 
@@ -369,6 +373,18 @@ def enviar_email_para_admin(inscricao):
         Destination={"ToAddresses": [ADMIN_EMAIL]},
         Message={"Subject": {"Data": assunto}, "Body": {"Html": {"Data": corpo_html}}}
     )
+
+def verificar_interesse_existente(email):
+    try:
+        response = table_interesse.scan(
+            FilterExpression="email = :email_val",
+            ExpressionAttributeValues={":email_val": email}
+        )
+        items = response.get("Items", [])
+        return bool(items)
+    except Exception as e:
+        logger.error(f"Erro ao verificar duplicidade de e-mail no clube: {e}", exc_info=True)
+        return False
 
 def resposta(status, body):
     return {"statusCode": status, "headers": cors_headers(), "body": json.dumps(body)}

@@ -105,6 +105,23 @@ def salvar_inscricao(event, context):
             return resposta(500, {"error": str(e)})
 
     # =====================
+    # NOVO: Checar se usuário está no Clube (GET)
+    # =====================
+    if path.endswith("/clube/interesse") and method == "GET":
+        try:
+            params = event.get("queryStringParameters", {}) or {}
+            email = params.get("email")
+
+            if not email:
+                return resposta(400, {"error": "O parâmetro 'email' é obrigatório."})
+
+            existe = verificar_interesse_existente(email)
+            return resposta(200, {"existe": existe})
+        except Exception as e:
+            logger.error("Erro ao checar interesse: %s", e, exc_info=True)
+            return resposta(500, {"error": str(e)})
+
+    # =====================
     # Rotas existentes (/inscricao)
     # =====================
     if "/galaxy" in path:

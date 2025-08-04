@@ -46,6 +46,7 @@ def salvar_inscricao(event, context):
 
     path = event.get("path", "")
     method = event.get("httpMethod", "")
+    resource = event.get("resource", "")
     logger.info(f"Path recebido: {path} | Method: {method}")
 
     # =====================
@@ -177,10 +178,10 @@ def salvar_inscricao(event, context):
             return resposta(500, {"error": "Falha ao listar cursos"})
 
     # =====================
-    # NOVO: Obter 1 curso por ID
+    # Obter 1 curso por ID: GET /cursos/{id}
     # =====================
-    if path.startswith("/cursos/") and method == "GET":
-        curso_id = path.rsplit("/", 1)[-1]
+    if resource == "/cursos/{id}" and method == "GET":
+        curso_id = event["pathParameters"]["id"]
         try:
             resp = table_cursos.get_item(Key={"id": curso_id})
             item = resp.get("Item")

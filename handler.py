@@ -47,6 +47,8 @@ def salvar_inscricao(event, context):
     path = event.get("path", "")
     method = event.get("httpMethod", "")
     resource = event.get("resource", "")
+    proxy = event.get("pathParameters", {}).get("proxy", "")
+    parts = proxy.split("/")
     logger.info(f"Path recebido: {path} | Method: {method}")
 
     # =====================
@@ -166,10 +168,10 @@ def salvar_inscricao(event, context):
             logger.error("Erro ao gerar paymentlink: %s", e, exc_info=True)
             return resposta(500, {"error": str(e)})
 
-    # =====================
-    # NOVO: Listar todos os cursos
-    # =====================
-    if path.endswith("/cursos") and method == "GET":
+    # ================
+    # GET /cursos
+    # ================
+    if method == "GET" and parts == ["cursos"]:
         try:
             resp = table_cursos.scan()
             return resposta(200, resp.get("Items", []))
@@ -177,11 +179,11 @@ def salvar_inscricao(event, context):
             logger.error("Erro ao listar cursos: %s", e, exc_info=True)
             return resposta(500, {"error": "Falha ao listar cursos"})
 
-    # =====================
-    # Obter 1 curso por ID: GET /cursos/{id}
-    # =====================
-    if resource == "/cursos/{id}" and method == "GET":
-        curso_id = event["pathParameters"]["id"]
+    # ================
+    # GET /cursos/{id}
+    # ================
+    if method == "GET" and len(parts) == 2 and parts[0] == "cursos":
+        curso_id = parts[1]
         try:
             resp = table_cursos.get_item(Key={"id": curso_id})
             item = resp.get("Item")

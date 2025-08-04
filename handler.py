@@ -46,7 +46,6 @@ def salvar_inscricao(event, context):
 
     path = event.get("path", "")
     method = event.get("httpMethod", "")
-    resource = event.get("resource", "")
     proxy = event.get("pathParameters", {}).get("proxy", "")
     parts = proxy.split("/")
     logger.info(f"Path recebido: {path} | Method: {method}")

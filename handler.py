@@ -46,8 +46,7 @@ def salvar_inscricao(event, context):
 
     path = event.get("path", "")
     method = event.get("httpMethod", "")
-    proxy = event.get("pathParameters", {}).get("proxy", "")
-    parts = proxy.split("/")
+    qs = event.get("queryStringParameters") or {}
     logger.info(f"Path recebido: {path} | Method: {method}")
 
     # =====================
@@ -167,31 +166,26 @@ def salvar_inscricao(event, context):
             logger.error("Erro ao gerar paymentlink: %s", e, exc_info=True)
             return resposta(500, {"error": str(e)})
 
-    # ================
-    # GET /cursos
-    # ================
-    if method == "GET" and parts == ["cursos"]:
+    # =====================
+    # GET /cursos ou GET /cursos?id=3
+    # =====================
+    if path.endswith("/cursos") and method == "GET":
+        curso_id = qs.get("id")
         try:
-            resp = table_cursos.scan()
-            return resposta(200, resp.get("Items", []))
+            if curso_id:
+                # buscar um único
+                resp = table_cursos.get_item(Key={"id": curso_id})
+                item = resp.get("Item")
+                if not item:
+                    return resposta(404, {"error": f"Curso '{curso_id}' não encontrado"})
+                return resposta(200, item)
+            else:
+                # listar todos
+                resp = table_cursos.scan()
+                return resposta(200, resp.get("Items", []))
         except Exception as e:
-            logger.error("Erro ao listar cursos: %s", e, exc_info=True)
-            return resposta(500, {"error": "Falha ao listar cursos"})
-
-    # ================
-    # GET /cursos/{id}
-    # ================
-    if method == "GET" and len(parts) == 2 and parts[0] == "cursos":
-        curso_id = parts[1]
-        try:
-            resp = table_cursos.get_item(Key={"id": curso_id})
-            item = resp.get("Item")
-            if not item:
-                return resposta(404, {"error": f"Curso '{curso_id}' não encontrado"})
-            return resposta(200, item)
-        except Exception as e:
-            logger.error("Erro ao buscar curso %s: %s", curso_id, e, exc_info=True)
-            return resposta(500, {"error": "Falha ao buscar curso"})
+            logger.error("Erro ao buscar/listar cursos: %s", e, exc_info=True)
+            return resposta(500, {"error": "Falha ao buscar cursos"})
 
     # =====================
     # NOVO: Checar se usuário está no Clube (GET)

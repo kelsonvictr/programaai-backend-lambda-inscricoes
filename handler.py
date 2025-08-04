@@ -16,6 +16,7 @@ logger.setLevel(logging.INFO)
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table('Inscricoes')
 table_interesse = dynamodb.Table('ListaInteresse')
+table_cursos        = dynamodb.Table('Cursos')
 
 # Clientes AWS
 ses = boto3.client('ses')
@@ -103,6 +104,92 @@ def salvar_inscricao(event, context):
         except Exception as e:
             logger.error("Erro inesperado no Clube: %s", e, exc_info=True)
             return resposta(500, {"error": str(e)})
+
+    # =====================
+    # NOVO: Geração de link de pagamento via Asaas usando dados da Inscrição
+    # =====================
+    if path.endswith("/paymentlink") and method == "POST":
+        try:
+            body_raw = event.get("body", "")
+            if not body_raw:
+                return resposta(400, {"error": "Body é obrigatório"})
+
+            data = json.loads(body_raw)
+            inscricao_id   = data.get("inscricaoId")
+            nome_curso     = data.get("curso")
+            payment_method = data.get("paymentMethod", "PIX").upper()
+
+            if not inscricao_id:
+                return resposta(400, {"error": "Campo 'inscricaoId' é obrigatório"})
+            if not nome_curso or payment_method not in ("PIX", "CARTAO"):
+                return resposta(400, {"error": "Informe 'curso' e 'paymentMethod' válido (PIX ou CARTAO)"})
+
+            # buscar inscrição para obter nome e cpf
+            inscr_resp = table.get_item(Key={"id": inscricao_id})
+            inscr_item = inscr_resp.get("Item")
+            if not inscr_item:
+                return resposta(404, {"error": f"Inscrição '{inscricao_id}' não encontrada"})
+
+            nome_aluno = inscr_item.get("nomeCompleto", "")
+            cpf_aluno  = inscr_item.get("cpf", "")
+            if not nome_aluno or not cpf_aluno:
+                return resposta(500, {"error": "Inscrição inválida: faltam 'nomeCompleto' ou 'cpf'"})
+
+            # buscar dados do curso
+            curso_resp = table_cursos.get_item(Key={"title": nome_curso})
+            curso_item = curso_resp.get("Item")
+            if not curso_item:
+                return resposta(404, {"error": f"Curso '{nome_curso}' não encontrado"})
+
+            valor = float(curso_item["price"])
+            external_ref = str(uuid.uuid4())
+
+            # gerar link
+            payment_link = criar_paymentlink_asaas(
+                nome_curso,
+                nome_aluno,
+                cpf_aluno,
+                valor,
+                payment_method,
+                external_ref
+            )
+
+            # retorna link + id da inscrição
+            return resposta(200, {
+                "inscricaoId": inscricao_id,
+                "paymentLinkId": payment_link.get("id"),
+                "url": payment_link.get("url")
+            })
+
+        except Exception as e:
+            logger.error("Erro ao gerar paymentlink: %s", e, exc_info=True)
+            return resposta(500, {"error": str(e)})
+
+    # =====================
+    # NOVO: Listar todos os cursos
+    # =====================
+    if path.endswith("/cursos") and method == "GET":
+        try:
+            resp = table_cursos.scan()
+            return resposta(200, resp.get("Items", []))
+        except Exception as e:
+            logger.error("Erro ao listar cursos: %s", e, exc_info=True)
+            return resposta(500, {"error": "Falha ao listar cursos"})
+
+    # =====================
+    # NOVO: Obter 1 curso por ID
+    # =====================
+    if path.startswith("/cursos/") and method == "GET":
+        curso_id = path.rsplit("/", 1)[-1]
+        try:
+            resp = table_cursos.get_item(Key={"id": curso_id})
+            item = resp.get("Item")
+            if not item:
+                return resposta(404, {"error": f"Curso '{curso_id}' não encontrado"})
+            return resposta(200, item)
+        except Exception as e:
+            logger.error("Erro ao buscar curso %s: %s", curso_id, e, exc_info=True)
+            return resposta(500, {"error": "Falha ao buscar curso"})
 
     # =====================
     # NOVO: Checar se usuário está no Clube (GET)
@@ -273,7 +360,7 @@ def processar_inscricao(event):
         except Exception as err:
             logger.error(f"Falha ao enviar e-mails: {err}")
 
-        return resposta(201, {"message": "Inscrição criada com sucesso!", "linkPagamento": payment_link.get("url", "")})
+        return resposta(201, {"message": "Inscrição criada com sucesso!", "linkPagamento": payment_link.get("url", ""), "inscricao_id": inscricao_id})
 
     except Exception as e:
         logger.error("Erro inesperado: %s", e, exc_info=True)

@@ -117,12 +117,11 @@ def salvar_inscricao(event, context):
 
             data = json.loads(body_raw)
             inscricao_id   = data.get("inscricaoId")
-            nome_curso     = data.get("curso")
             payment_method = data.get("paymentMethod", "PIX").upper()
 
             if not inscricao_id:
                 return resposta(400, {"error": "Campo 'inscricaoId' é obrigatório"})
-            if not nome_curso or payment_method not in ("PIX", "CARTAO"):
+            if not payment_method not in ("PIX", "CARTAO"):
                 return resposta(400, {"error": "Informe 'curso' e 'paymentMethod' válido (PIX ou CARTAO)"})
 
             # buscar inscrição para obter nome e cpf
@@ -133,6 +132,7 @@ def salvar_inscricao(event, context):
 
             nome_aluno = inscr_item.get("nomeCompleto", "")
             cpf_aluno  = inscr_item.get("cpf", "")
+            nome_curso = inscr_item.get("curso", "")
             if not nome_aluno or not cpf_aluno:
                 return resposta(500, {"error": "Inscrição inválida: faltam 'nomeCompleto' ou 'cpf'"})
 

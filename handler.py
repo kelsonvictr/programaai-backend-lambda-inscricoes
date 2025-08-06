@@ -206,69 +206,74 @@ def processar_inscricao(event, context):
     logger.info("Processando inscrição, body=%s", event.get("body"))
     body_raw = event.get("body")
     if not body_raw:
-        return resposta(400, {"error":"Body is required"})
+        return resposta(400, {"error": "Body is required"})
     body = json.loads(body_raw)
     if body.get("website"):
         logger.warning("Honeypot triggered in inscrição")
-        return resposta(400, {"error":"Solicitação inválida."})
+        return resposta(400, {"error": "Solicitação inválida."})
 
     # Extrair campos
-    cpf_aluno   = body.get("cpf","").strip()
-    nome_curso  = body.get("curso","").strip()
-    nome_aluno  = body.get("nomeCompleto","").strip()
-    rg_aluno    = body.get("rg","").strip()
-    email       = body.get("email","").strip()
-    whatsapp    = body.get("whatsapp","").strip()
-    sexo        = body.get("sexo","").strip()
-    data_nasc   = body.get("dataNascimento","").strip()
-    form_ti     = body.get("formacaoTI","").strip()
-    onde_estuda = body.get("ondeEstuda","").strip()
-    como_soube  = body.get("comoSoube","").strip()
-    nome_amigo  = body.get("nomeAmigo","").strip()
+    cpf_aluno     = body.get("cpf", "").strip()
+    nome_curso    = body.get("curso", "").strip()
+    nome_aluno    = body.get("nomeCompleto", "").strip()
+    rg_aluno      = body.get("rg", "").strip()
+    email         = body.get("email", "").strip()
+    whatsapp      = body.get("whatsapp", "").strip()
+    sexo          = body.get("sexo", "").strip()
+    data_nasc     = body.get("dataNascimento", "").strip()
+    form_ti       = body.get("formacaoTI", "").strip()
+    onde_estuda   = body.get("ondeEstuda", "").strip()
+    como_soube    = body.get("comoSoube", "").strip()
+    nome_amigo    = body.get("nomeAmigo", "").strip()
     aceita_termos = bool(body.get("aceitouTermos"))
-    cupom       = body.get("cupom","").strip().upper()
+    cupom         = body.get("cupom", "").strip().upper()
 
     # Duplicidade
     if verificar_inscricao_existente(cpf_aluno, nome_curso):
         logger.info("Inscrição duplicada: cpf=%s curso=%s", cpf_aluno, nome_curso)
-        return resposta(409, {"error":f"Aluno {cpf_aluno} já inscrito em {nome_curso}."})
+        return resposta(409, {"error": f"Aluno {cpf_aluno} já inscrito em {nome_curso}."})
 
     now = datetime.now(timezone(timedelta(hours=-3))).isoformat()
-    ip = event.get("requestContext", {}).get("identity", {}).get("sourceIp","")
-    ua = event.get("headers", {}).get("User-Agent","")
+    ip = event.get("requestContext", {}).get("identity", {}).get("sourceIp", "")
+    ua = event.get("headers", {}).get("User-Agent", "")
 
-    # Preço original
-    curso_resp = table_cursos.get_item(Key={"title": nome_curso})
-    curso_item = curso_resp.get("Item")
-    if not curso_item:
-        logger.warning("Curso não encontrado em inscrição: %s", nome_curso)
-        return resposta(404, {"error":f"Curso '{nome_curso}' não encontrado"})
-    raw_price = curso_item.get("price","")
-    clean_price = raw_price.replace("R$","").replace(".","").replace(",",".").strip()
+    # Preço original (busca por título via scan)
+    scan_resp = table_cursos.scan(
+        FilterExpression="title = :t",
+        ExpressionAttributeValues={":t": nome_curso}
+    )
+    items = scan_resp.get("Items", [])
+    if not items:
+        logger.warning("Curso '%s' não encontrado em inscrição", nome_curso)
+        return resposta(404, {"error": f"Curso '{nome_curso}' não encontrado"})
+    curso_item   = items[0]
+    raw_price    = curso_item.get("price", "")
+    clean_price  = raw_price.replace("R$", "").replace(".", "").replace(",", ".").strip()
     try:
         valor_original = float(clean_price)
     except ValueError:
         logger.error("Preço inválido no curso: %s", raw_price)
-        return resposta(500, {"error":f"Preço inválido: {raw_price}"})
+        return resposta(500, {"error": f"Preço inválido: {raw_price}"})
     logger.info("Preço original do curso '%s': %f", nome_curso, valor_original)
 
-    # Desconto
+    # Aplica desconto de cupom (se houver)
     desconto_valor = 0.0
     if cupom:
         desconto = checa_cupom_e_retorna_desconto(cupom, nome_curso)
         if not desconto:
-            logger.info("Cupom invalido: %s", cupom)
-            return resposta(400, {"error":"Cupom inválido ou não aplicável"})
+            logger.info("Cupom inválido: %s", cupom)
+            return resposta(400, {"error": "Cupom inválido ou não aplicável"})
         if desconto.endswith("%"):
             pct = float(desconto.rstrip("%"))
-            desconto_valor = valor_original * pct/100
+            desconto_valor = valor_original * pct / 100
         else:
-            desconto_valor = float(desconto.replace("R$","").replace(",","."))
+            desconto_valor = float(desconto.replace("R$", "").replace(",", "."))
         logger.info("Desconto aplicado: %s => %f", desconto, desconto_valor)
+
     valor_com_desconto = max(0, valor_original - desconto_valor)
     logger.info("Valor com desconto: %f", valor_com_desconto)
 
-    # Montar e salvar item
+    # Monta e salva o item
     inscricao_id = str(uuid.uuid4())
     item = {
         "id": inscricao_id,
@@ -302,7 +307,11 @@ def processar_inscricao(event, context):
     except Exception:
         logger.exception("Erro ao enviar e-mails de inscrição")
 
-    return resposta(201, {"message":"Inscrição criada com sucesso!", "inscricao_id": inscricao_id})
+    return resposta(201, {
+        "message": "Inscrição criada com sucesso!",
+        "inscricao_id": inscricao_id
+    })
+
 
 
 def checa_cupom_e_retorna_desconto(cupom, curso):

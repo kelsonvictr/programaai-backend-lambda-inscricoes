@@ -437,13 +437,12 @@ def validar_jwt(hdr):
 
 
 def resposta(status, body):
+    return {"statusCode": status, "headers": cors_headers(), "body": json.dumps(body)}
+
+def cors_headers():
     return {
-        "statusCode": status,
-        "headers": {
-            "Access-Control-Allow-Origin":"*",
-            "Access-Control-Allow-Headers":"*",
-            "Access-Control-Allow-Methods":"OPTIONS,GET,POST,DELETE",
-            "Content-Type":"application/json"
-        },
-        "body": json.dumps(body)
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "*",
+        "Access-Control-Allow-Methods": "OPTIONS,GET,POST,DELETE",
+        "Content-Type": "application/json"
     }

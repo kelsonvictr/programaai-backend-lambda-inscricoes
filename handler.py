@@ -107,46 +107,47 @@ def salvar_inscricao(event, context):
             return resposta(500, {"error": str(e)})
 
     # =====================
-    # Geração de link de pagamento via Asaas usando dados da Inscrição
+    # Geração de link de pagamento via Asaas usando nome do curso
     # =====================
     if path.endswith("/paymentlink") and method == "POST":
         try:
-            body_raw = event.get("body", "")
-            if not body_raw:
-                return resposta(400, {"error": "Body é obrigatório"})
-
+            # 1) Lê e valida payload
+            body_raw = event.get("body", "") or ""
             data = json.loads(body_raw)
-            inscricao_id = data.get("inscricaoId")
+            inscricao_id   = data.get("inscricaoId")
             payment_method = data.get("paymentMethod", "PIX").upper()
 
-            # validação dos parâmetros
             if not inscricao_id:
                 return resposta(400, {"error": "Campo 'inscricaoId' é obrigatório"})
             if payment_method not in ("PIX", "CARTAO"):
                 return resposta(400, {"error": "Informe 'paymentMethod' válido (PIX ou CARTAO)"})
 
-            # buscar inscrição por ID (PK única na tabela Inscricoes)
-            logger.info(f"Buscando inscricao pelo id: {inscricao_id}")
+            # 2) Busca inscrição por ID (PK = id)
             inscr_resp = table.get_item(Key={"id": inscricao_id})
             inscr_item = inscr_resp.get("Item")
             if not inscr_item:
                 return resposta(404, {"error": f"Inscrição '{inscricao_id}' não encontrada"})
 
-            # extrair dados necessários da inscrição
             nome_aluno = inscr_item.get("nomeCompleto", "")
-            cpf_aluno = inscr_item.get("cpf", "")
+            cpf_aluno  = inscr_item.get("cpf", "")
             nome_curso = inscr_item.get("curso", "")
 
-            # buscar dados do curso para obter valor
-            curso_resp = table_cursos.get_item(Key={"title": nome_curso})
-            curso_item = curso_resp.get("Item")
-            if not curso_item:
+            if not nome_curso:
+                return resposta(500, {"error": "Inscrição inválida: faltando atributo 'curso'"})
+
+            # 3) Busca curso pelo nome (title) usando scan+FilterExpression
+            curso_scan = table_cursos.scan(
+                FilterExpression="title = :t",
+                ExpressionAttributeValues={":t": nome_curso}
+            )
+            cursos = curso_scan.get("Items", [])
+            if not cursos:
                 return resposta(404, {"error": f"Curso '{nome_curso}' não encontrado"})
+            curso_item = cursos[0]
 
-            valor = float(curso_item["price"])
+            # 4) Extrai valor e gera payment link no Asaas
+            valor        = float(curso_item.get("price", 0))
             external_ref = str(uuid.uuid4())
-
-            # gerar link no Asaas
             payment_link = criar_paymentlink_asaas(
                 nome_curso,
                 nome_aluno,
@@ -156,7 +157,7 @@ def salvar_inscricao(event, context):
                 external_ref
             )
 
-            # retorna link + id da inscrição
+            # 5) Retorna URL para o front
             return resposta(200, {
                 "inscricaoId": inscricao_id,
                 "paymentLinkId": payment_link.get("id"),
@@ -166,6 +167,7 @@ def salvar_inscricao(event, context):
         except Exception as e:
             logger.error("Erro ao gerar paymentlink: %s", e, exc_info=True)
             return resposta(500, {"error": str(e)})
+
 
 
     # =====================

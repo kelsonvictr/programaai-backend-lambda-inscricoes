@@ -49,7 +49,7 @@ def salvar_inscricao(event, context):
     logger.info("Incoming request: path=%s method=%s qs=%s", path, method, qs)
 
     # POST /clube/interesse
-    if path.endswith("/clube/interesse") and method == "POST":
+    """if path.endswith("/clube/interesse") and method == "POST":
         body = json.loads(event.get("body", "{}"))
         logger.info("Clube Interesse POST payload: %s", body)
         if body.get("website"):
@@ -78,17 +78,17 @@ def salvar_inscricao(event, context):
             enviar_email_admin_clube(item)
         except Exception:
             logger.exception("Erro enviando e-mails clube")
-        return resposta(201, {"message":"Cadastro no Clube realizado."})
+        return resposta(201, {"message":"Cadastro no Clube realizado."})"""
 
     # GET /clube/interesse?email=...
-    if path.endswith("/clube/interesse") and method == "GET":
+    """if path.endswith("/clube/interesse") and method == "GET":
         email = qs.get("email","").strip()
         logger.info("Clube Interesse GET query: email=%s", email)
         if not email:
             return resposta(400, {"error":"Parâmetro 'email' é obrigatório."})
         existe = verificar_interesse_existente(email)
         logger.info("Clube check for %s: %s", email, existe)
-        return resposta(200, {"existe": existe})
+        return resposta(200, {"existe": existe})"""
 
     # GET /checa-cupom?cupom=XXX&curso=YYY
     if path.endswith("/checa-cupom") and method == "GET":

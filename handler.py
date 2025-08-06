@@ -126,6 +126,7 @@ def salvar_inscricao(event, context):
                 return resposta(400, {"error": "Informe 'paymentMethod' válido (PIX ou CARTAO)"})
 
             # buscar inscrição por ID (PK única na tabela Inscricoes)
+            logger.info(f"Buscando inscricao pelo id: {inscricao_id}")
             inscr_resp = table.get_item(Key={"id": inscricao_id})
             inscr_item = inscr_resp.get("Item")
             if not inscr_item:

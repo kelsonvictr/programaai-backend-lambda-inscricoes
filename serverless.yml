@@ -45,4 +45,12 @@ functions:
       - http:
           path: '{proxy+}'
           method: any
-          cors: true
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - Authorization
+              - X-Amz-Date
+              - X-Api-Key
+              - X-Amz-Security-Token
+            allowCredentials: false

@@ -441,7 +441,7 @@ def resposta(status, body):
 
 def cors_headers():
     return {
-        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Origin": "https://programaai.dev",
         "Access-Control-Allow-Headers": "*",
         "Access-Control-Allow-Methods": "OPTIONS,GET,POST,DELETE",
         "Content-Type": "application/json"

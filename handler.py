@@ -3,6 +3,7 @@ import os
 import uuid
 import logging
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 import boto3
 import requests
@@ -246,32 +247,33 @@ def processar_inscricao(event, context):
     if not items:
         logger.warning("Curso '%s' não encontrado em inscrição", nome_curso)
         return resposta(404, {"error": f"Curso '{nome_curso}' não encontrado"})
-    curso_item   = items[0]
-    raw_price    = curso_item.get("price", "")
-    clean_price  = raw_price.replace("R$", "").replace(".", "").replace(",", ".").strip()
+    raw_price   = items[0].get("price", "")
+    clean_price = raw_price.replace("R$", "").replace(".", "").replace(",", ".").strip()
     try:
-        valor_original = float(clean_price)
-    except ValueError:
+        valor_original = Decimal(clean_price)
+    except Exception:
         logger.error("Preço inválido no curso: %s", raw_price)
         return resposta(500, {"error": f"Preço inválido: {raw_price}"})
-    logger.info("Preço original do curso '%s': %f", nome_curso, valor_original)
+    logger.info("Preço original do curso '%s': %s", nome_curso, valor_original)
 
     # Aplica desconto de cupom (se houver)
-    desconto_valor = 0.0
+    desconto_valor = Decimal("0")
     if cupom:
         desconto = checa_cupom_e_retorna_desconto(cupom, nome_curso)
         if not desconto:
             logger.info("Cupom inválido: %s", cupom)
             return resposta(400, {"error": "Cupom inválido ou não aplicável"})
         if desconto.endswith("%"):
-            pct = float(desconto.rstrip("%"))
-            desconto_valor = valor_original * pct / 100
+            pct = Decimal(desconto.rstrip("%")) / Decimal("100")
+            desconto_valor = (valor_original * pct).quantize(Decimal("0.01"))
         else:
-            desconto_valor = float(desconto.replace("R$", "").replace(",", "."))
-        logger.info("Desconto aplicado: %s => %f", desconto, desconto_valor)
+            # remove 'R$' e converte
+            val = desconto.replace("R$", "").replace(",", ".").strip()
+            desconto_valor = Decimal(val).quantize(Decimal("0.01"))
+        logger.info("Desconto aplicado: %s => %s", desconto, desconto_valor)
 
-    valor_com_desconto = max(0, valor_original - desconto_valor)
-    logger.info("Valor com desconto: %f", valor_com_desconto)
+    valor_com_desconto = (valor_original - desconto_valor).quantize(Decimal("0.01"))
+    logger.info("Valor com desconto: %s", valor_com_desconto)
 
     # Monta e salva o item
     inscricao_id = str(uuid.uuid4())

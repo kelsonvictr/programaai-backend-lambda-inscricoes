@@ -116,26 +116,28 @@ def salvar_inscricao(event, context):
                 return resposta(400, {"error": "Body é obrigatório"})
 
             data = json.loads(body_raw)
-            inscricao_id = data.get("inscricaoId")
+            inscricao_id   = data.get("inscricaoId")
             payment_method = data.get("paymentMethod", "PIX").upper()
 
             # validação dos parâmetros
             if not inscricao_id:
                 return resposta(400, {"error": "Campo 'inscricaoId' é obrigatório"})
             if payment_method not in ("PIX", "CARTAO"):
-                return resposta(400, {"error": "Informe 'inscricaoId' e 'paymentMethod' válido (PIX ou CARTAO)"})
+                return resposta(400, {"error": "Informe 'paymentMethod' válido (PIX ou CARTAO)"})
 
-            # buscar inscrição para obter nome e cpf
-            inscr_resp = table.get_item(Key={"id": inscricao_id})
+            # buscar inscrição (tabela Inscricoes com PK=curso e SK=id)
+            # IMPORTANTE: ajuste os nomes 'curso' e 'id' caso sua chave composta tenha outros atributos
+            inscr_resp = table.get_item(Key={
+                "curso": data.get("curso"),   # você precisa do nome do curso aqui; caso prefira, recupere acima de outro jeito
+                "id": inscricao_id
+            })
             inscr_item = inscr_resp.get("Item")
             if not inscr_item:
                 return resposta(404, {"error": f"Inscrição '{inscricao_id}' não encontrada"})
 
-            nome_aluno = inscr_item.get("nomeCompleto", "")
-            cpf_aluno = inscr_item.get("cpf", "")
-            nome_curso = inscr_item.get("curso", "")
-            if not nome_aluno or not cpf_aluno:
-                return resposta(500, {"error": "Inscrição inválida: faltam 'nomeCompleto' ou 'cpf'"})
+            nome_aluno = inscr_item["nomeCompleto"]
+            cpf_aluno  = inscr_item["cpf"]
+            nome_curso = inscr_item["curso"]
 
             # buscar dados do curso
             curso_resp = table_cursos.get_item(Key={"title": nome_curso})
@@ -166,6 +168,7 @@ def salvar_inscricao(event, context):
         except Exception as e:
             logger.error("Erro ao gerar paymentlink: %s", e, exc_info=True)
             return resposta(500, {"error": str(e)})
+
 
     # =====================
     # GET /cursos ou GET /cursos?id=3

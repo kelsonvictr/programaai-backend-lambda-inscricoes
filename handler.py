@@ -107,7 +107,7 @@ def salvar_inscricao(event, context):
             return resposta(500, {"error": str(e)})
 
     # =====================
-    # NOVO: Geração de link de pagamento via Asaas usando dados da Inscrição
+    # Geração de link de pagamento via Asaas usando dados da Inscrição
     # =====================
     if path.endswith("/paymentlink") and method == "POST":
         try:
@@ -116,7 +116,7 @@ def salvar_inscricao(event, context):
                 return resposta(400, {"error": "Body é obrigatório"})
 
             data = json.loads(body_raw)
-            inscricao_id   = data.get("inscricaoId")
+            inscricao_id = data.get("inscricaoId")
             payment_method = data.get("paymentMethod", "PIX").upper()
 
             # validação dos parâmetros
@@ -125,21 +125,18 @@ def salvar_inscricao(event, context):
             if payment_method not in ("PIX", "CARTAO"):
                 return resposta(400, {"error": "Informe 'paymentMethod' válido (PIX ou CARTAO)"})
 
-            # buscar inscrição (tabela Inscricoes com PK=curso e SK=id)
-            # IMPORTANTE: ajuste os nomes 'curso' e 'id' caso sua chave composta tenha outros atributos
-            inscr_resp = table.get_item(Key={
-                "curso": data.get("curso"),   # você precisa do nome do curso aqui; caso prefira, recupere acima de outro jeito
-                "id": inscricao_id
-            })
+            # buscar inscrição por ID (PK única na tabela Inscricoes)
+            inscr_resp = table.get_item(Key={"id": inscricao_id})
             inscr_item = inscr_resp.get("Item")
             if not inscr_item:
                 return resposta(404, {"error": f"Inscrição '{inscricao_id}' não encontrada"})
 
-            nome_aluno = inscr_item["nomeCompleto"]
-            cpf_aluno  = inscr_item["cpf"]
-            nome_curso = inscr_item["curso"]
+            # extrair dados necessários da inscrição
+            nome_aluno = inscr_item.get("nomeCompleto", "")
+            cpf_aluno = inscr_item.get("cpf", "")
+            nome_curso = inscr_item.get("curso", "")
 
-            # buscar dados do curso
+            # buscar dados do curso para obter valor
             curso_resp = table_cursos.get_item(Key={"title": nome_curso})
             curso_item = curso_resp.get("Item")
             if not curso_item:
@@ -148,7 +145,7 @@ def salvar_inscricao(event, context):
             valor = float(curso_item["price"])
             external_ref = str(uuid.uuid4())
 
-            # gerar link
+            # gerar link no Asaas
             payment_link = criar_paymentlink_asaas(
                 nome_curso,
                 nome_aluno,

@@ -1,505 +1,364 @@
 import json
-import boto3
-import uuid
 import os
-import requests
+import uuid
 import logging
 from datetime import datetime, timedelta, timezone
 
+import boto3
+import requests
 import firebase_admin
 from firebase_admin import auth, credentials
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# DynamoDB
-dynamodb = boto3.resource('dynamodb')
-table = dynamodb.Table('Inscricoes')
-table_interesse = dynamodb.Table('ListaInteresse')
-table_cursos        = dynamodb.Table('Cursos')
-
-# Clientes AWS
-ses = boto3.client('ses')
-s3 = boto3.client('s3')
+# AWS clients & resources
+dynamodb         = boto3.resource('dynamodb')
+table_inscricoes = dynamodb.Table('Inscricoes')
+table_interesse  = dynamodb.Table('ListaInteresse')
+table_cursos     = dynamodb.Table('Cursos')
+table_descontos  = dynamodb.Table('Descontos')
+ses              = boto3.client('ses')
+s3               = boto3.client('s3')
 
 # Configs
-ASAAS_API_KEY = os.environ.get('ASAAS')
-ASAAS_ENDPOINT = "https://www.asaas.com/api/v3"
-REMETENTE = 'programa AI <no-reply@programaai.dev>'
-
-FIREBASE_BUCKET = os.environ.get('FIREBASE_BUCKET')
-FIREBASE_KEY_PATH = os.environ.get('FIREBASE_KEY_PATH')
-ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL')
+ASAAS_API_KEY    = os.environ.get('ASAAS')
+ASAAS_ENDPOINT   = "https://www.asaas.com/api/v3"
+REMETENTE        = 'programa AI <no-reply@programaai.dev>'
+FIREBASE_BUCKET  = os.environ.get('FIREBASE_BUCKET')
+FIREBASE_KEY_PATH= os.environ.get('FIREBASE_KEY_PATH')
+ADMIN_EMAIL      = os.environ.get('ADMIN_EMAIL')
 
 def init_firebase():
     if not firebase_admin._apps:
-        logger.info(f"Carregando chave Firebase do bucket {FIREBASE_BUCKET}/{FIREBASE_KEY_PATH}")
         obj = s3.get_object(Bucket=FIREBASE_BUCKET, Key=FIREBASE_KEY_PATH)
-        json_key = json.load(obj['Body'])
-        cred = credentials.Certificate(json_key)
+        key = json.load(obj['Body'])
+        cred = credentials.Certificate(key)
         firebase_admin.initialize_app(cred)
 
 init_firebase()
 
 def salvar_inscricao(event, context):
-    logger.info("Evento recebido: %s", json.dumps(event))
-
-    path = event.get("path", "")
+    path   = event.get("path", "")
     method = event.get("httpMethod", "")
-    qs = event.get("queryStringParameters") or {}
-    logger.info(f"Path recebido: {path} | Method: {method}")
+    qs     = event.get("queryStringParameters") or {}
 
-    # =====================
-    # NOVO: Clube Programa AI (Lista de Interesse)
-    # =====================
+    # POST /clube/interesse
     if path.endswith("/clube/interesse") and method == "POST":
+        body = json.loads(event.get("body","{}"))
+        if body.get("website"):
+            return resposta(400, {"error":"Solicitação inválida."})
+        nome, email, aceita = body.get("nome"), body.get("email"), body.get("aceitaContato")
+        if not nome or not email or not aceita:
+            return resposta(400, {"error":"Nome, email e aceitaContato são obrigatórios."})
+        if verificar_interesse_existente(email):
+            return resposta(409, {"error":f"Email {email} já cadastrado."})
+        item = {
+            "id": str(uuid.uuid4()),
+            "nome": nome,
+            "email": email,
+            "whatsapp": body.get("whatsapp",""),
+            "interesse": body.get("interesses",[]),
+            "aceita_contato": aceita,
+            "dataCadastro": datetime.now(timezone(timedelta(hours=-3))).isoformat()
+        }
+        table_interesse.put_item(Item=item)
         try:
-            body_raw = event.get("body")
-            if not body_raw:
-                return resposta(400, {"error": "Body is required"})
+            enviar_email_boas_vindas_clube(item)
+            enviar_email_admin_clube(item)
+        except Exception:
+            logger.exception("Erro enviando e-mails clube")
+        return resposta(201, {"message":"Cadastro no Clube realizado."})
 
-            body = json.loads(body_raw)
+    # GET /clube/interesse?email=...
+    if path.endswith("/clube/interesse") and method == "GET":
+        email = qs.get("email","").strip()
+        if not email:
+            return resposta(400, {"error":"Parâmetro 'email' é obrigatório."})
+        existe = verificar_interesse_existente(email)
+        return resposta(200, {"existe": existe})
 
-            # Honeypot contra bots
-            if body.get("website"):
-                logger.warning("Tentativa de bot detectada.")
-                return resposta(400, {"error": "Solicitação inválida."})
+    # GET /checa-cupom?cupom=XXX&curso=YYY
+    if path.endswith("/checa-cupom") and method == "GET":
+        cupom = qs.get("cupom","").strip()
+        curso = qs.get("curso","").strip()
+        if not cupom or not curso:
+            return resposta(400, {"error":"Parâmetros 'cupom' e 'curso' são obrigatórios."})
+        scan = table_descontos.scan(
+            FilterExpression="cupom = :c AND curso = :u AND ativo = :t AND disponivel = :t",
+            ExpressionAttributeValues={":c":cupom, ":u":curso, ":t":True}
+        )
+        valid = bool(scan.get("Items", []))
+        return resposta(200, {"valid": valid})
 
-            nome = body.get("nome")
-            email = body.get("email")
-            whatsapp = body.get("whatsapp")
-            aceita_contato = body.get("aceitaContato")
-            interesse = body.get("interesses", [])
-
-            if not nome or not email or not aceita_contato:
-                return resposta(400, {"error": "Nome, email e aceita contato são obrigatórios."})
-
-            # Verificação de duplicidade
-            if verificar_interesse_existente(email):
-                return resposta(409, {"error": f"O e-mail {email} já está cadastrado no Clube programa AI."})
-
-            agora = datetime.now(timezone(timedelta(hours=-3))).isoformat()
-            interesse_id = str(uuid.uuid4())
-
-            item = {
-                "id": interesse_id,
-                "nome": nome,
-                "email": email,
-                "whatsapp": whatsapp,
-                "interesse": interesse,
-                "aceita_contato": aceita_contato,
-                "dataCadastro": agora
-            }
-
-            table_interesse.put_item(Item=item)
-            logger.info(f"Item salvo no DynamoDB: {item}")
-
-            try:
-                enviar_email_boas_vindas_clube(item)
-                enviar_email_admin_clube(item)
-            except Exception as err:
-                logger.error(f"Falha ao enviar e-mails do clube: {err}")
-
-            return resposta(201, {"message": "Cadastro realizado com sucesso no Clube Programa AI!"})
-
-        except Exception as e:
-            logger.error("Erro inesperado no Clube: %s", e, exc_info=True)
-            return resposta(500, {"error": str(e)})
-
+    # POST /paymentlink
     if path.endswith("/paymentlink") and method == "POST":
         try:
-            body = json.loads(event.get("body", "{}"))
-            inscricao_id = body.get("inscricaoId")
-            payment_method = body.get("paymentMethod", "PIX").upper()
-
-            if not inscricao_id:
-                return resposta(400, {"error": "Campo 'inscricaoId' é obrigatório"})
-            if payment_method not in ("PIX", "CARTAO"):
-                return resposta(400, {"error": "Informe 'paymentMethod' válido (PIX ou CARTAO)"})
-
-            # busca inscrição
-            inscr_resp = table.get_item(Key={"id": inscricao_id})
-            inscr = inscr_resp.get("Item")
-            if not inscr:
-                return resposta(404, {"error": f"Inscrição '{inscricao_id}' não encontrada"})
-
-            nome_aluno = inscr.get("nomeCompleto", "")
-            cpf_aluno = inscr.get("cpf", "")
-            nome_curso = inscr.get("curso", "")
-            if not nome_curso:
-                return resposta(500, {"error": "Inscrição sem atributo 'curso'"})
-
-            # busca curso pelo nome (scan)
+            body = json.loads(event.get("body","{}"))
+            iid  = body.get("inscricaoId","").strip()
+            pm   = body.get("paymentMethod","PIX").upper()
+            if not iid or pm not in ("PIX","CARTAO"):
+                return resposta(400, {"error":"inscricaoId e paymentMethod válidos são obrigatórios."})
+            resp = table_inscricoes.get_item(Key={"id": iid})
+            insc = resp.get("Item")
+            if not insc:
+                return resposta(404, {"error":f"Inscrição '{iid}' não encontrada"})
+            aluno = insc.get("nomeCompleto","")
+            cpf   = insc.get("cpf","")
+            curso = insc.get("curso","")
+            # busca curso por nome
             scan = table_cursos.scan(
                 FilterExpression="title = :t",
-                ExpressionAttributeValues={":t": nome_curso}
-            )
-            items = scan.get("Items", [])
-            if not items:
-                return resposta(404, {"error": f"Curso '{nome_curso}' não encontrado"})
-            curso_item = items[0]
-
-            # ** aqui fazemos o parse correto **
-            raw_price = curso_item.get("price", "")
-            clean_price = (
-                raw_price
-                .replace("R$", "").replace(" ", "")
-                .replace(".", "")
-                .replace(",", ".")
-            )
-            try:
-                valor = float(clean_price)
-            except ValueError:
-                logger.error(f"Preço inválido no curso: {raw_price}")
-                return resposta(500, {"error": f"Preço inválido no curso: {raw_price}"})
-
-            external_ref = str(uuid.uuid4())
-            payment_link = criar_paymentlink_asaas(
-                nome_curso,
-                nome_aluno,
-                cpf_aluno,
-                valor,
-                payment_method,
-                external_ref
-            )
-
-            return resposta(200, {
-                "inscricaoId": inscricao_id,
-                "paymentLinkId": payment_link.get("id"),
-                "url": payment_link.get("url")
-            })
-
+                ExpressionAttributeValues={":t":curso}
+            ).get("Items",[])
+            if not scan:
+                return resposta(404, {"error":f"Curso '{curso}' não encontrado"})
+            raw_price = scan[0].get("price","")
+            clean = raw_price.replace("R$","").replace(" ","").replace(".","").replace(",",".")
+            valor = float(clean)
+            link = criar_paymentlink_asaas(curso, aluno, cpf, valor, pm, str(uuid.uuid4()))
+            return resposta(200, {"inscricaoId": iid, "paymentLinkId": link.get("id"), "url": link.get("url")})
         except Exception as e:
-            logger.error("Erro ao gerar paymentlink: %s", e, exc_info=True)
+            logger.exception("Erro ao gerar paymentlink")
             return resposta(500, {"error": str(e)})
 
-    # =====================
-    # GET /cursos ou GET /cursos?id=3
-    # =====================
+    # GET /cursos or GET /cursos?id=...
     if path.endswith("/cursos") and method == "GET":
-        curso_id = qs.get("id")
+        cid = qs.get("id")
         try:
-            if curso_id:
-                # buscar um único
-                resp = table_cursos.get_item(Key={"id": curso_id})
-                item = resp.get("Item")
-                if not item:
-                    return resposta(404, {"error": f"Curso '{curso_id}' não encontrado"})
-                return resposta(200, item)
+            if cid:
+                r = table_cursos.get_item(Key={"id": cid}).get("Item")
+                if not r: return resposta(404, {"error":f"Curso '{cid}' não encontrado"})
+                return resposta(200, r)
             else:
-                # listar todos
-                resp = table_cursos.scan()
-                return resposta(200, resp.get("Items", []))
+                items = table_cursos.scan().get("Items",[])
+                return resposta(200, items)
         except Exception as e:
-            logger.error("Erro ao buscar/listar cursos: %s", e, exc_info=True)
-            return resposta(500, {"error": "Falha ao buscar cursos"})
+            logger.exception("Erro listando cursos")
+            return resposta(500, {"error":"Falha ao buscar cursos"})
 
-    # =====================
-    # NOVO: Checar se usuário está no Clube (GET)
-    # =====================
-    if path.endswith("/clube/interesse") and method == "GET":
-        try:
-            params = event.get("queryStringParameters", {}) or {}
-            email = params.get("email")
+    # POST /inscricao
+    if path.endswith("/inscricao") and method == "POST":
+        return processar_inscricao(event, context)
 
-            if not email:
-                return resposta(400, {"error": "O parâmetro 'email' é obrigatório."})
-
-            existe = verificar_interesse_existente(email)
-            return resposta(200, {"existe": existe})
-        except Exception as e:
-            logger.error("Erro ao checar interesse: %s", e, exc_info=True)
-            return resposta(500, {"error": str(e)})
-
-    # =====================
-    # Rotas existentes (/inscricao)
-    # =====================
+    # Admin routes (galaxy)
     if "/galaxy" in path:
         try:
-            auth_header = event["headers"].get("Authorization", "")
-            uid, email = validar_jwt(auth_header)
-            logger.info(f"Usuário autenticado: {email} ({uid})")
-        except Exception as e:
-            logger.error(f"Falha na autenticação: {e}")
-            return resposta(401, {"error": "Unauthorized"})
-
+            hdr = event["headers"].get("Authorization","")
+            uid, email = validar_jwt(hdr)
+        except Exception:
+            return resposta(401, {"error":"Unauthorized"})
         if path.endswith("/galaxy/inscricoes") and method == "GET":
             return listar_inscricoes()
-
         if path.startswith("/galaxy/inscricoes/") and method == "DELETE":
-            inscricao_id = path.split("/")[-1]
-            return remover_inscricao(inscricao_id)
+            iid = path.split("/")[-1]
+            return remover_inscricao(iid)
+        return resposta(404, {"error":"Admin route not found"})
 
-        return resposta(404, {"error": "Admin route not found"})
-
+    # CORS preflight
     if method == "OPTIONS":
-        return resposta(200, {"message": "CORS OK"})
+        return resposta(200, {"message":"CORS OK"})
 
-    if path.endswith("/inscricao") and method == "POST":
-        return processar_inscricao(event)
+    return resposta(404, {"error":"Route not found"})
 
-    return resposta(404, {"error": "Route not found"})
 
-# =====================
-# Funções da Lista de Interesse
-# =====================
-def enviar_email_boas_vindas_clube(item):
-    logger.info(f"Enviando e-mail de boas-vindas para {item['email']}")
-
-    assunto = "🎉 Bem-vindo ao Clube programa AI!"
-    corpo_html = f"""
-    <div style="font-family: Arial, sans-serif; color: #333;">
-      <img src="https://programaai.dev/assets/logo-BPg_3cKF.png" alt="Programa AI" style="height: 50px; margin-bottom: 20px;" />
-      <h2>Parabéns {item['nome']}! 🎉</h2>
-      <p>Você entrou gratuitamente no <strong>Clube Programa AI</strong>!</p>
-      <p>A partir de agora você tem <strong>5% de desconto em qualquer curso</strong> da nossa plataforma.</p>
-      <p>Em breve enviaremos também novidades e um mini curso gratuito.</p>
-      <br/>
-      <p>Equipe <strong>programa AI</strong></p>
-    </div>
-    """
-
-    ses.send_email(
-        Source=REMETENTE,
-        Destination={"ToAddresses": [item["email"]]},
-        Message={
-            "Subject": {"Data": assunto},
-            "Body": {"Html": {"Data": corpo_html}}
-        }
-    )
-
-def enviar_email_admin_clube(item):
-    logger.info("Enviando e-mail para admin sobre novo membro do clube")
-
-    assunto = f"Novo cadastro no Clube programa AI: {item['nome']}"
-    corpo_html = f"""
-    <div style="font-family: Arial, sans-serif; color: #333;">
-      <h2>Novo cadastro no Clube Programa AI</h2>
-      <p><strong>Nome:</strong> {item['nome']}</p>
-      <p><strong>Email:</strong> {item['email']}</p>
-      <p><strong>WhatsApp:</strong> {item['whatsapp']}</p>
-      <p><strong>Áreas de interesse:</strong> {", ".join(item['interesse']) if item['interesse'] else "-"}</p>
-      <p><strong>Data:</strong> {item['dataCadastro']}</p>
-    </div>
-    """
-
-    ses.send_email(
-        Source=REMETENTE,
-        Destination={"ToAddresses": [ADMIN_EMAIL]},
-        Message={
-            "Subject": {"Data": assunto},
-            "Body": {"Html": {"Data": corpo_html}}
-        }
-    )
-
-# =====================
-# Rotas de inscrição existentes (mantive como estavam)
-# =====================
-def processar_inscricao(event):
+# inscrição sem link Asaas, com cupom
+def processar_inscricao(event, context):
     try:
-        body_raw = event.get("body")
-        if not body_raw:
-            return resposta(400, {"error": "Body is required"})
-
-        body = json.loads(body_raw)
-
+        body = json.loads(event.get("body","{}"))
         if body.get("website"):
-            logger.warning("Tentativa de bot detectada.")
-            return resposta(400, {"error": "Solicitação inválida."})
+            return resposta(400, {"error":"Solicitação inválida."})
 
-        cpf_aluno = body.get("cpf", "")
-        nome_curso = body["curso"]
+        # dados básicos
+        nome_curso  = body["curso"]
+        nome_aluno  = body["nomeCompleto"]
+        cpf_aluno   = body.get("cpf","")
+        rg_aluno    = body.get("rg","")
+        email       = body["email"]
+        whatsapp    = body["whatsapp"]
+        sexo        = body["sexo"]
+        dnasc       = body["dataNascimento"]
+        formacao    = body["formacaoTI"]
+        onde        = body.get("ondeEstuda","")
+        como_soube  = body["comoSoube"]
+        amigo       = body.get("nomeAmigo","")
+        cupom_user  = body.get("cupom","").strip()
 
-        # Verificar duplicidade
-        if verificar_inscricao_existente(cpf_aluno, nome_curso):
-            return resposta(409, {"error": f"O aluno com CPF {cpf_aluno} já está inscrito no curso {nome_curso}."})
+        # valor original e descontado
+        raw_val    = body["valor"]
+        vo         = float(raw_val.replace("R$","").replace(".","").replace(",","."))
+        vd         = vo
 
-        agora = datetime.now(timezone(timedelta(hours=-3))).isoformat()
-        ip = event.get("requestContext", {}).get("identity", {}).get("sourceIp", "desconhecido")
-        user_agent = event.get("headers", {}).get("User-Agent", "desconhecido")
+        # aplica cupom
+        if cupom_user:
+            scan = table_descontos.scan(
+                FilterExpression="cupom = :c AND curso = :u AND ativo = :t AND disponivel = :t",
+                ExpressionAttributeValues={":c":cupom_user,":u":nome_curso,":t":True}
+            ).get("Items",[])
+            if scan:
+                d = scan[0]["desconto"]
+                if d.endswith("%"):
+                    pct = float(d.rstrip("%").replace(",","."))/100
+                    vd = round(vo*(1-pct),2)
+                else:
+                    fx = float(d.replace("R$","").replace(".","").replace(",","."))
+                    vd = round(max(vo-fx,0),2)
+            else:
+                cupom_user = ""
 
-        inscricao_id = str(uuid.uuid4())
-        external_ref = str(uuid.uuid4())
-
-        valor_curso = float(body["valor"])
-        payment_method = body.get("paymentMethod", "PIX").upper()
-        nome_aluno = body["nomeCompleto"]
-        rg_aluno = body.get("rg", "")
-
-        payment_link = criar_paymentlink_asaas(
-            nome_curso, nome_aluno, cpf_aluno, valor_curso, payment_method, external_ref
-        )
-
+        iid = str(uuid.uuid4())
         item = {
-            "id": inscricao_id,
+            "id": iid,
             "curso": nome_curso,
             "nomeCompleto": nome_aluno,
             "cpf": cpf_aluno,
             "rg": rg_aluno,
-            "email": body["email"],
-            "whatsapp": body["whatsapp"],
-            "sexo": body["sexo"],
-            "dataNascimento": body["dataNascimento"],
-            "formacaoTI": body["formacaoTI"],
-            "ondeEstuda": body.get("ondeEstuda", ""),
-            "comoSoube": body["comoSoube"],
-            "nomeAmigo": body.get("nomeAmigo", ""),
-            "dataInscricao": agora,
+            "email": email,
+            "whatsapp": whatsapp,
+            "sexo": sexo,
+            "dataNascimento": dnasc,
+            "formacaoTI": formacao,
+            "ondeEstuda": onde,
+            "comoSoube": como_soube,
+            "nomeAmigo": amigo,
+            "dataInscricao": datetime.now(timezone(timedelta(hours=-3))).isoformat(),
             "aceitouTermos": True,
-            "ip": ip,
-            "userAgent": user_agent,
-            "asaasPaymentLinkId": payment_link.get("id", ""),
-            "asaasPaymentLinkUrl": payment_link.get("url", ""),
-            "asaasExternalReference": external_ref,
-            "paymentMethod": payment_method
+            "valorOriginal": str(vo),
+            "valorComDesconto": str(vd),
+            "cupom": cupom_user
         }
-
-        table.put_item(Item=item)
-        logger.info("Item salvo no DynamoDB e paymentLink criado")
-
+        table_inscricoes.put_item(Item=item)
         try:
             enviar_email_para_aluno(item)
             enviar_email_para_admin(item)
-        except Exception as err:
-            logger.error(f"Falha ao enviar e-mails: {err}")
-
-        return resposta(201, {"message": "Inscrição criada com sucesso!", "linkPagamento": payment_link.get("url", ""), "inscricao_id": inscricao_id})
+        except Exception:
+            logger.exception("Erro enviando e-mails inscrição")
+        return resposta(201, {"message":"Inscrição criada", "inscricaoId": iid})
 
     except Exception as e:
-        logger.error("Erro inesperado: %s", e, exc_info=True)
-        return resposta(500, {"error": str(e)})
+        logger.exception("Erro em processar_inscricao")
+        return resposta(500, {"error":str(e)})
 
-# =====================
-# Funções auxiliares (mantive)
-# =====================
-def verificar_inscricao_existente(cpf, curso):
-    try:
-        response = table.scan(
-            FilterExpression='cpf = :cpf_val AND curso = :curso_val',
-            ExpressionAttributeValues={':cpf_val': cpf, ':curso_val': curso}
-        )
-        items = response.get("Items", [])
-        return bool(items)
-    except Exception as e:
-        logger.error(f"Erro ao verificar duplicidade: {e}", exc_info=True)
-        return False
 
-def listar_inscricoes():
-    try:
-        result = table.scan()
-        return resposta(200, result.get("Items", []))
-    except Exception as e:
-        logger.error("Erro ao listar: %s", e, exc_info=True)
-        return resposta(500, {"error": str(e)})
-
-def remover_inscricao(inscricao_id):
-    try:
-        table.delete_item(Key={"id": inscricao_id})
-        return resposta(200, {"message": "Inscrição removida com sucesso"})
-    except Exception as e:
-        logger.error("Erro ao remover: %s", e, exc_info=True)
-        return resposta(500, {"error": str(e)})
-
-def criar_paymentlink_asaas(curso, aluno, cpf, valor, metodo, external_ref):
-    headers = {"Content-Type": "application/json", "access_token": ASAAS_API_KEY}
+# geração de payment link Asaas
+def criar_paymentlink_asaas(curso, aluno, cpf, valor, metodo, ext_ref):
+    hdr = {"Content-Type":"application/json","access_token":ASAAS_API_KEY}
     nome = f"Inscrição: {curso}"
-    descricao = f"Inscrição: {curso}. Aluno(a): {aluno} - CPF: {cpf}"
-
-    if metodo == "PIX":
-        payload = {
-            "name": nome,
-            "billingType": "PIX",
-            "chargeType": "DETACHED",
-            "value": valor,
-            "description": descricao,
-            "dueDateLimitDays": 2,
-            "externalReference": external_ref,
-            "notificationEnabled": True
-        }
-    elif metodo == "CARTAO":
-        valor_com_taxa = round(valor * 1.08, 2)
-        payload = {
-            "name": nome,
-            "billingType": "CREDIT_CARD",
-            "chargeType": "INSTALLMENT",
-            "value": valor_com_taxa,
-            "description": descricao,
-            "dueDateLimitDays": 7,
-            "maxInstallmentCount": 12,
-            "externalReference": external_ref,
-            "notificationEnabled": True
-        }
+    desc = f"{nome}. Aluno: {aluno} - CPF: {cpf}"
+    if metodo=="PIX":
+        pl = {"name":nome, "billingType":"PIX", "chargeType":"DETACHED",
+              "value":valor, "description":desc, "dueDateLimitDays":2,
+              "externalReference":ext_ref, "notificationEnabled":True}
     else:
-        raise ValueError(f"Método de pagamento inválido: {metodo}")
+        tc = round(valor*1.08,2)
+        pl = {"name":nome, "billingType":"CREDIT_CARD","chargeType":"INSTALLMENT",
+              "value":tc, "description":desc, "dueDateLimitDays":7,
+              "maxInstallmentCount":12, "externalReference":ext_ref,
+              "notificationEnabled":True}
+    r = requests.post(f"{ASAAS_ENDPOINT}/paymentLinks", headers=hdr, json=pl)
+    r.raise_for_status()
+    return r.json()
 
-    response = requests.post(f"{ASAAS_ENDPOINT}/paymentLinks", headers=headers, json=payload)
-    response.raise_for_status()
-    return response.json()
 
-def validar_jwt(authorization_header):
-    if not authorization_header:
-        raise Exception("Authorization header missing")
-    parts = authorization_header.split()
-    if len(parts) != 2 or parts[0] != "Bearer":
-        raise Exception("Invalid authorization header")
+# helpers de e-mail, verificação, listagem e jwt
+def enviar_email_boas_vindas_clube(item):
+    assunto = "🎉 Bem-vindo ao Clube programa AI!"
+    html = f"<h2>Parabéns {item['nome']}!</h2><p>Você entrou no Clube!</p>"
+    ses.send_email(Source=REMETENTE,
+                   Destination={"ToAddresses":[item["email"]]},
+                   Message={"Subject":{"Data":assunto},
+                            "Body":{"Html":{"Data":html}}})
 
-    token = parts[1]
-    decoded_token = auth.verify_id_token(token)
-    return decoded_token["uid"], decoded_token.get("email")
+def enviar_email_admin_clube(item):
+    assunto = f"Novo membro do Clube: {item['nome']}"
+    html = f"<p>Email: {item['email']}</p>"
+    ses.send_email(Source=REMETENTE,
+                   Destination={"ToAddresses":[ADMIN_EMAIL]},
+                   Message={"Subject":{"Data":assunto},
+                            "Body":{"Html":{"Data":html}}})
 
-def enviar_email_para_aluno(inscricao):
-    assunto = f"Inscrição confirmada: {inscricao['curso']}"
-    corpo_html = f"""
-    <div style="font-family: Arial, sans-serif; color: #333;">
-      <h2>Inscrição confirmada 🎉</h2>
-      <p>Olá <strong>{inscricao['nomeCompleto']}</strong>, obrigado por se inscrever no curso <strong>{inscricao['curso']}</strong>!</p>
-      <p>Confirme sua inscrição pelo link de pagamento:</p>
-      <a href="{inscricao['asaasPaymentLinkUrl']}">Clique aqui para pagar</a>
-    </div>
-    """
-
-    ses.send_email(
-        Source=REMETENTE,
-        Destination={"ToAddresses": [inscricao["email"]]},
-        Message={"Subject": {"Data": assunto}, "Body": {"Html": {"Data": corpo_html}}}
-    )
+def enviar_email_para_aluno(insc):
+    assunto = f"Inscrição confirmada: {insc['curso']}"
+    html = f"<p>Olá {insc['nomeCompleto']}, obrigado por se inscrever!</p>"
+    ses.send_email(Source=REMETENTE,
+                   Destination={"ToAddresses":[insc["email"]]},
+                   Message={"Subject":{"Data":assunto},
+                            "Body":{"Html":{"Data":html}}})
 
 def enviar_email_para_admin(inscricao):
-    assunto = f"Nova inscrição: {inscricao['curso']} - {inscricao['nomeCompleto']}"
-    corpo_html = f"""
+    assunto = f"📥 Nova inscrição: {inscricao['curso']} - {inscricao['nomeCompleto']}"
+    # Monta um HTML simples listando cada campo da inscrição
+    html = f"""
     <div style="font-family: Arial, sans-serif; color: #333;">
       <h2>Nova inscrição recebida</h2>
-      <p><strong>Curso:</strong> {inscricao['curso']}</p>
-      <p><strong>Nome:</strong> {inscricao['nomeCompleto']}</p>
-      <p><strong>Email:</strong> {inscricao['email']}</p>
+      <ul>
+        <li><strong>ID:</strong> {inscricao.get('id','')}</li>
+        <li><strong>Curso:</strong> {inscricao.get('curso','')}</li>
+        <li><strong>Nome completo:</strong> {inscricao.get('nomeCompleto','')}</li>
+        <li><strong>CPF:</strong> {inscricao.get('cpf','')}</li>
+        <li><strong>RG:</strong> {inscricao.get('rg','')}</li>
+        <li><strong>E-mail:</strong> {inscricao.get('email','')}</li>
+        <li><strong>WhatsApp:</strong> {inscricao.get('whatsapp','')}</li>
+        <li><strong>Sexo:</strong> {inscricao.get('sexo','')}</li>
+        <li><strong>Data de Nascimento:</strong> {inscricao.get('dataNascimento','')}</li>
+        <li><strong>Formação TI:</strong> {inscricao.get('formacaoTI','')}</li>
+        <li><strong>Onde estuda/estudou:</strong> {inscricao.get('ondeEstuda','')}</li>
+        <li><strong>Como soube:</strong> {inscricao.get('comoSoube','')}</li>
+        <li><strong>Nome do amigo (indicação):</strong> {inscricao.get('nomeAmigo','')}</li>
+        <li><strong>Data da inscrição:</strong> {inscricao.get('dataInscricao','')}</li>
+        <li><strong>Valor original:</strong> {inscricao.get('valorOriginal','')}</li>
+        <li><strong>Valor com desconto:</strong> {inscricao.get('valorComDesconto','')}</li>
+        <li><strong>Cupom aplicado:</strong> {inscricao.get('cupom','')}</li>
+      </ul>
     </div>
     """
 
     ses.send_email(
         Source=REMETENTE,
         Destination={"ToAddresses": [ADMIN_EMAIL]},
-        Message={"Subject": {"Data": assunto}, "Body": {"Html": {"Data": corpo_html}}}
+        Message={
+            "Subject": {"Data": assunto},
+            "Body": {"Html": {"Data": html}}
+        }
     )
 
+
+def verificar_inscricao_existente(cpf, curso):
+    resp = table_inscricoes.scan(
+        FilterExpression="cpf = :c AND curso = :u",
+        ExpressionAttributeValues={":c":cpf,":u":curso}
+    )
+    return bool(resp.get("Items",[]))
+
 def verificar_interesse_existente(email):
-    try:
-        response = table_interesse.scan(
-            FilterExpression="email = :email_val",
-            ExpressionAttributeValues={":email_val": email}
-        )
-        items = response.get("Items", [])
-        return bool(items)
-    except Exception as e:
-        logger.error(f"Erro ao verificar duplicidade de e-mail no clube: {e}", exc_info=True)
-        return False
+    resp = table_interesse.scan(
+        FilterExpression="email = :e",
+        ExpressionAttributeValues={":e":email}
+    )
+    return bool(resp.get("Items",[]))
+
+def listar_inscricoes():
+    items = table_inscricoes.scan().get("Items",[])
+    return resposta(200, items)
+
+def remover_inscricao(iid):
+    table_inscricoes.delete_item(Key={"id":iid})
+    return resposta(200, {"message":"Inscrição removida"})
+
+def validar_jwt(hdr):
+    if not hdr or not hdr.startswith("Bearer "):
+        raise Exception("Invalid auth")
+    token = hdr.split()[1]
+    dec = auth.verify_id_token(token)
+    return dec["uid"], dec.get("email")
 
 def resposta(status, body):
-    return {"statusCode": status, "headers": cors_headers(), "body": json.dumps(body)}
+    return {"statusCode":status, "headers":cors_headers(), "body":json.dumps(body)}
 
 def cors_headers():
     return {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "*",
-        "Access-Control-Allow-Methods": "OPTIONS,GET,POST,DELETE",
-        "Content-Type": "application/json"
+        "Access-Control-Allow-Origin":"*",
+        "Access-Control-Allow-Headers":"*",
+        "Access-Control-Allow-Methods":"OPTIONS,GET,POST,DELETE",
+        "Content-Type":"application/json"
     }

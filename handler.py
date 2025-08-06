@@ -96,13 +96,22 @@ def salvar_inscricao(event, context):
         logger.info("Checagem de cupom: cupom=%s curso=%s", cupom, curso)
         if not cupom or not curso:
             return resposta(400, {"error":"Parâmetros 'cupom' e 'curso' são obrigatórios."})
-        scan = table_descontos.scan(
+
+        resp = table_descontos.scan(
             FilterExpression="cupom = :c AND curso = :u AND ativo = :t AND disponivel = :t",
             ExpressionAttributeValues={":c":cupom, ":u":curso, ":t":True}
         )
-        valid = bool(scan.get("Items", []))
-        logger.info("Cupom %s válido para %s? %s", cupom, curso, valid)
-        return resposta(200, {"valid": valid})
+        items = resp.get("Items", [])
+        valid = bool(items)
+
+        # pega o valor do desconto (ex: "10%" ou "R$10,00") se existir
+        desconto = items[0]["desconto"] if valid else None
+        logger.info("Cupom %s válido? %s desconto=%s", cupom, valid, desconto)
+
+        return resposta(200, {
+            "valid": valid,
+            "desconto": desconto
+        })
 
     # POST /paymentlink
     if path.endswith("/paymentlink") and method == "POST":

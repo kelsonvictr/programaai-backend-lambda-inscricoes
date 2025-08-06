@@ -116,13 +116,14 @@ def salvar_inscricao(event, context):
                 return resposta(400, {"error": "Body é obrigatório"})
 
             data = json.loads(body_raw)
-            inscricao_id   = data.get("inscricaoId")
+            inscricao_id = data.get("inscricaoId")
             payment_method = data.get("paymentMethod", "PIX").upper()
 
+            # validação dos parâmetros
             if not inscricao_id:
                 return resposta(400, {"error": "Campo 'inscricaoId' é obrigatório"})
-            if not payment_method not in ("PIX", "CARTAO"):
-                return resposta(400, {"error": "Informe 'curso' e 'paymentMethod' válido (PIX ou CARTAO)"})
+            if payment_method not in ("PIX", "CARTAO"):
+                return resposta(400, {"error": "Informe 'inscricaoId' e 'paymentMethod' válido (PIX ou CARTAO)"})
 
             # buscar inscrição para obter nome e cpf
             inscr_resp = table.get_item(Key={"id": inscricao_id})
@@ -131,7 +132,7 @@ def salvar_inscricao(event, context):
                 return resposta(404, {"error": f"Inscrição '{inscricao_id}' não encontrada"})
 
             nome_aluno = inscr_item.get("nomeCompleto", "")
-            cpf_aluno  = inscr_item.get("cpf", "")
+            cpf_aluno = inscr_item.get("cpf", "")
             nome_curso = inscr_item.get("curso", "")
             if not nome_aluno or not cpf_aluno:
                 return resposta(500, {"error": "Inscrição inválida: faltam 'nomeCompleto' ou 'cpf'"})

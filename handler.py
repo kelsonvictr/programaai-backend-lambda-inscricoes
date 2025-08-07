@@ -175,7 +175,7 @@ def salvar_inscricao(event, context):
         return processar_inscricao(event, context)
 
     # Admin routes
-    if "/galaxy" in path:
+    """if "/galaxy" in path:
         try:
             hdr = event["headers"].get("Authorization","")
             uid, email = validar_jwt(hdr)
@@ -188,7 +188,7 @@ def salvar_inscricao(event, context):
         if path.startswith("/galaxy/inscricoes/") and method == "DELETE":
             iid = path.split("/")[-1]
             return remover_inscricao(iid)
-        return resposta(404, {"error":"Admin route not found"})
+        return resposta(404, {"error":"Admin route not found"})"""
 
     # CORS
     if method == "OPTIONS":

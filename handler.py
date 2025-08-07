@@ -257,23 +257,26 @@ def processar_inscricao(event, context):
         return resposta(500, {"error": f"Preço inválido: {raw_price}"})
     logger.info("Preço original do curso '%s': %s", nome_curso, valor_original)
 
-    # Aplica desconto de cupom (se houver)
+    # Tenta aplicar desconto de cupom (se houver), mas não bloqueia inscrição se inválido
     desconto_valor = Decimal("0")
     if cupom:
-        desconto = checa_cupom_e_retorna_desconto(cupom, nome_curso)
-        if not desconto:
-            logger.info("Cupom inválido: %s", cupom)
-            return resposta(400, {"error": "Cupom inválido ou não aplicável"})
-        if desconto.endswith("%"):
-            pct = Decimal(desconto.rstrip("%")) / Decimal("100")
-            desconto_valor = (valor_original * pct).quantize(Decimal("0.01"))
-        else:
-            val = desconto.replace("R$", "").replace(",", ".").strip()
-            desconto_valor = Decimal(val).quantize(Decimal("0.01"))
-        logger.info("Desconto aplicado: %s => %s", desconto, desconto_valor)
+        try:
+            desconto = checa_cupom_e_retorna_desconto(cupom, nome_curso)
+            if desconto:
+                if desconto.endswith("%"):
+                    pct = Decimal(desconto.rstrip("%")) / Decimal("100")
+                    desconto_valor = (valor_original * pct).quantize(Decimal("0.01"))
+                else:
+                    val = desconto.replace("R$", "").replace(",", ".").strip()
+                    desconto_valor = Decimal(val).quantize(Decimal("0.01"))
+                logger.info("Desconto aplicado: %s => %s", desconto, desconto_valor)
+            else:
+                logger.info("Cupom '%s' inválido para o curso '%s', prosseguindo sem desconto", cupom, nome_curso)
+        except Exception as e:
+            logger.warning("Erro ao verificar cupom '%s': %s. Prosseguindo sem desconto.", cupom, e)
 
     valor_com_desconto = (valor_original - desconto_valor).quantize(Decimal("0.01"))
-    logger.info("Valor com desconto: %s", valor_com_desconto)
+    logger.info("Valor com desconto final (ou preço cheio): %s", valor_com_desconto)
 
     # Monta e salva o item de inscrição
     inscricao_id = str(uuid.uuid4())
@@ -316,7 +319,6 @@ def processar_inscricao(event, context):
         "message": "Inscrição criada com sucesso!",
         "inscricao_id": inscricao_id
     })
-
 
 
 def checa_cupom_e_retorna_desconto(cupom, curso):

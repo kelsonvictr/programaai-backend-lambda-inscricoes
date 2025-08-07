@@ -118,34 +118,29 @@ def salvar_inscricao(event, context):
     if path.endswith("/paymentlink") and method == "POST":
         logger.info("PaymentLink request body: %s", event.get("body"))
         try:
-            body = json.loads(event.get("body","{}"))
-            iid  = body.get("inscricaoId","").strip()
-            pm   = body.get("paymentMethod","PIX").upper()
-            if not iid or pm not in ("PIX","CARTAO"):
+            body = json.loads(event.get("body", "{}"))
+            iid = body.get("inscricaoId", "").strip()
+            pm = body.get("paymentMethod", "PIX").upper()
+            if not iid or pm not in ("PIX", "CARTAO"):
                 logger.warning("Invalid paymentlink parameters: %s", body)
-                return resposta(400, {"error":"inscricaoId e paymentMethod válidos são obrigatórios."})
+                return resposta(400, {"error": "inscricaoId e paymentMethod válidos são obrigatórios."})
+
+            # Busca inscrição e pega valorCurso
             resp = table_inscricoes.get_item(Key={"id": iid})
             insc = resp.get("Item")
             if not insc:
                 logger.warning("Inscrição %s não encontrada", iid)
-                return resposta(404, {"error":f"Inscrição '{iid}' não encontrada"})
-            aluno = insc.get("nomeCompleto","")
-            cpf   = insc.get("cpf","")
-            curso = insc.get("curso","")
-            logger.info("Found inscrição %s: aluno=%s, curso=%s", iid, aluno, curso)
-            # busca curso por nome
-            scan = table_cursos.scan(
-                FilterExpression="title = :t",
-                ExpressionAttributeValues={":t":curso}
-            ).get("Items",[])
-            if not scan:
-                logger.warning("Curso %s não encontrado na table Cursos", curso)
-                return resposta(404, {"error":f"Curso '{curso}' não encontrado"})
-            raw_price = scan[0].get("price","")
-            clean = raw_price.replace("R$","").replace(" ","").replace(".","").replace(",",".")
-            valor = float(clean)
-            logger.info("Creating Asaas link: valor=%s method=%s", valor, pm)
-            link = criar_paymentlink_asaas(curso, aluno, cpf, valor, pm, str(uuid.uuid4()))
+                return resposta(404, {"error": f"Inscrição '{iid}' não encontrada"})
+
+            aluno = insc.get("nomeCompleto", "")
+            curso = insc.get("curso", "")
+            # Aqui pegamos o valor já calculado e armazenado na inscrição:
+            valor_decimal = insc.get("valorCurso", 0)
+            # Se vier como Decimal, converte para float:
+            valor = float(valor_decimal) if isinstance(valor_decimal, (Decimal,)) else float(valor_decimal)
+
+            logger.info("Found inscrição %s: aluno=%s, curso=%s, valor=%s", iid, aluno, curso, valor)
+            link = criar_paymentlink_asaas(curso, aluno, valor, pm, iid)
             logger.info("Asaas link created: %s", link.get("url"))
             return resposta(200, {
                 "inscricaoId": iid,
@@ -325,10 +320,10 @@ def checa_cupom_e_retorna_desconto(cupom, curso):
     return items[0].get("desconto") if items else None
 
 
-def criar_paymentlink_asaas(curso, aluno, cpf, valor, metodo, ext_ref):
+def criar_paymentlink_asaas(curso, aluno, valor, metodo, ext_ref):
     hdr = {"Content-Type":"application/json", "access_token":ASAAS_API_KEY}
     nome = f"Inscrição: {curso}"
-    desc = f"{nome}. Aluno: {aluno} - CPF: {cpf}"
+    desc = f"{nome}. Aluno: {aluno}"
     if metodo == "PIX":
         payload = {
             "name": nome, "billingType": "PIX", "chargeType": "DETACHED",

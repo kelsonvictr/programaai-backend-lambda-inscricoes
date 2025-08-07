@@ -378,16 +378,6 @@ def enviar_email_admin_clube(item):
 
 
 def enviar_email_para_aluno(insc):
-    assunto = f"Inscrição confirmada: {insc['curso']}"
-    html = f"<p>Olá {insc['nomeCompleto']}, obrigado por se inscrever!</p>"
-    ses.send_email(Source=REMETENTE,
-                   Destination={"ToAddresses":[insc["email"]]},
-                   Message={"Subject":{"Data":assunto},
-                            "Body":{"Html":{"Data":html}}})
-    logger.info("Email confirmação inscrição enviado a %s", insc["email"])
-
-
-def enviar_email_para_aluno(insc):
     inscricao_id = insc["id"]
     curso = insc["curso"]
     nome = insc["nomeCompleto"]

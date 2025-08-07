@@ -224,16 +224,12 @@ def processar_inscricao(event, context):
     aceita_termos = bool(body.get("aceitouTermos"))
     cupom         = body.get("cupom", "").strip().upper()
 
-    # Duplicidade
+    # Verifica duplicidade
     if verificar_inscricao_existente(cpf_aluno, nome_curso):
         logger.info("Inscrição duplicada: cpf=%s curso=%s", cpf_aluno, nome_curso)
         return resposta(409, {"error": f"Aluno {cpf_aluno} já inscrito em {nome_curso}."})
 
-    now = datetime.now(timezone(timedelta(hours=-3))).isoformat()
-    ip = event.get("requestContext", {}).get("identity", {}).get("sourceIp", "")
-    ua = event.get("headers", {}).get("User-Agent", "")
-
-    # Preço original (busca por título via scan)
+    # Busca dados do curso (para preço e para checar 'ativo')
     scan_resp = table_cursos.scan(
         FilterExpression="title = :t",
         ExpressionAttributeValues={":t": nome_curso}
@@ -242,7 +238,17 @@ def processar_inscricao(event, context):
     if not items:
         logger.warning("Curso '%s' não encontrado em inscrição", nome_curso)
         return resposta(404, {"error": f"Curso '{nome_curso}' não encontrado"})
-    raw_price   = items[0].get("price", "")
+    curso_item = items[0]
+
+    # Bloqueia inscrição se curso estiver inativo
+    if not curso_item.get("ativo", True):
+        logger.info("Tentativa de inscrição em curso inativo: %s", nome_curso)
+        return resposta(400, {
+            "error": f"Inscrições para o curso '{nome_curso}' estão encerradas."
+        })
+
+    # Calcula preço original
+    raw_price   = curso_item.get("price", "")
     clean_price = raw_price.replace("R$", "").replace(".", "").replace(",", ".").strip()
     try:
         valor_original = Decimal(clean_price)
@@ -262,7 +268,6 @@ def processar_inscricao(event, context):
             pct = Decimal(desconto.rstrip("%")) / Decimal("100")
             desconto_valor = (valor_original * pct).quantize(Decimal("0.01"))
         else:
-            # remove 'R$' e converte
             val = desconto.replace("R$", "").replace(",", ".").strip()
             desconto_valor = Decimal(val).quantize(Decimal("0.01"))
         logger.info("Desconto aplicado: %s => %s", desconto, desconto_valor)
@@ -270,8 +275,11 @@ def processar_inscricao(event, context):
     valor_com_desconto = (valor_original - desconto_valor).quantize(Decimal("0.01"))
     logger.info("Valor com desconto: %s", valor_com_desconto)
 
-    # Monta e salva o item
+    # Monta e salva o item de inscrição
     inscricao_id = str(uuid.uuid4())
+    now = datetime.now(timezone(timedelta(hours=-3))).isoformat()
+    ip = event.get("requestContext", {}).get("identity", {}).get("sourceIp", "")
+    ua = event.get("headers", {}).get("User-Agent", "")
     item = {
         "id": inscricao_id,
         "curso": nome_curso,
@@ -297,7 +305,7 @@ def processar_inscricao(event, context):
     table_inscricoes.put_item(Item=item)
     logger.info("Inscrição salva: %s", item)
 
-    # Notificações
+    # Envia notificações
     try:
         enviar_email_para_aluno(item)
         enviar_email_para_admin(item)

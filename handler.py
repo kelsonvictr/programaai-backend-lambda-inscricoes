@@ -387,6 +387,85 @@ def enviar_email_para_aluno(insc):
     logger.info("Email confirmação inscrição enviado a %s", insc["email"])
 
 
+def enviar_email_para_aluno(insc):
+    inscricao_id = insc["id"]
+    curso = insc["curso"]
+    nome = insc["nomeCompleto"]
+    pagamento_url = f"https://www.programaai.dev/pagamento/{inscricao_id}"
+
+    assunto = f"Recebemos sua inscrição em {curso}"
+
+    html = f"""
+    <html>
+      <body style="font-family:Arial, sans-serif; line-height:1.6; color:#333;">
+        <!-- Logo -->
+        <div style="text-align:center; margin-bottom:20px;">
+          <img src="https://programaai.dev/assets/logo-BPg_3cKF.png"
+               alt="programa AI"
+               style="height:50px;" />
+        </div>
+
+        <h2 style="color:#0056b3; margin-bottom:0.5em;">
+          Olá, {nome}!
+        </h2>
+
+        <p>
+          Recebemos sua inscrição no curso <strong>{curso}</strong> e
+          já estamos preparando tudo para você.
+        </p>
+
+        <p>
+          Para garantir sua vaga, confirme seu pagamento clicando no link
+          abaixo:
+        </p>
+        <p style="text-align:center; margin:1.5em 0;">
+          <a href="{pagamento_url}"
+             style="display:inline-block; padding:12px 24px; background:#28a745; color:#fff; text-decoration:none; border-radius:4px;">
+            CONFIRMAR PAGAMENTO
+          </a>
+        </p>
+
+        <p>
+          Estamos ansiosos para começar essa jornada de muito código e
+          conhecimento! 🚀
+        </p>
+
+        <p>
+          ⚠️ A vaga só estará assegurada após a confirmação do pagamento.
+        </p>
+
+        <p>
+          Em breve, você será adicionado ao grupo exclusivo de WhatsApp do
+          curso, onde compartilharemos todas as novidades, inclusive conteúdos
+          de pré-curso!
+        </p>
+
+        <p>
+          Qualquer dúvida, é só responder este e-mail ou falar conosco no
+          WhatsApp. Estamos aqui para ajudar! 😊
+        </p>
+
+        <hr style="border:none; border-top:1px solid #eee; margin:2em 0;" />
+
+        <p style="font-size:0.9em; color:#777;">
+          Se você não se inscreveu ou recebeu este e-mail por engano, por
+          favor, ignore.
+        </p>
+      </body>
+    </html>
+    """
+
+    ses.send_email(
+        Source=REMETENTE,
+        Destination={"ToAddresses": [insc["email"]]},
+        Message={
+            "Subject": {"Data": assunto},
+            "Body": {"Html": {"Data": html}}
+        }
+    )
+    logger.info("Email de confirmação enviado a %s", insc["email"])
+
+
 def enviar_email_para_admin(insc):
     assunto = f"📥 Nova inscrição: {insc['curso']} - {insc['nomeCompleto']}"
     html = "<ul>" + "".join(

@@ -31,6 +31,8 @@ FIREBASE_BUCKET   = os.environ.get('FIREBASE_BUCKET')
 FIREBASE_KEY_PATH = os.environ.get('FIREBASE_KEY_PATH')
 ADMIN_EMAIL       = os.environ.get('ADMIN_EMAIL')
 
+FULLSTACK_NOME_CURSO = "Curso Presencial Programação Fullstack"
+
 
 def init_firebase():
     if not firebase_admin._apps:
@@ -47,6 +49,62 @@ def salvar_inscricao(event, context):
     method = event.get("httpMethod", "")
     qs     = event.get("queryStringParameters") or {}
     logger.info("Incoming request: path=%s method=%s qs=%s", path, method, qs)
+
+    # POST /isAssinatura
+    if path.endswith("/isAssinatura") and method == "POST":
+        logger.info("isAssinatura request body: %s", event.get("body"))
+        try:
+            body = json.loads(event.get("body", "{}"))
+            iid = (body.get("inscricaoId") or "").strip()
+            valor_assinatura = bool(body.get("isAssinatura", True))
+
+            if not iid:
+                logger.warning("inscricaoId ausente em /isAssinatura")
+                return resposta(400, {"error": "Parâmetro 'inscricaoId' é obrigatório."})
+
+            # busca inscrição
+            resp = table_inscricoes.get_item(Key={"id": iid})
+            insc = resp.get("Item")
+            if not insc:
+                logger.warning("Inscrição %s não encontrada em /isAssinatura", iid)
+                return resposta(404, {"error": f"Inscrição '{iid}' não encontrada"})
+
+            # valida curso
+            nome_curso = insc.get("curso", "")
+            if FULLSTACK_NOME_CURSO not in nome_curso:
+                logger.info("Bloqueado /isAssinatura: curso '%s' não contém '%s'", nome_curso, FULLSTACK_NOME_CURSO)
+                return resposta(403, {"error": f"Ação permitida apenas para inscrições do curso que contenha '{FULLSTACK_NOME_CURSO}'."})
+
+            # atualiza campo
+            agora = datetime.now(timezone(timedelta(hours=-3))).isoformat()
+            upd = table_inscricoes.update_item(
+                Key={"id": iid},
+                UpdateExpression="SET isAssinatura = :v, updatedAt = :u",
+                ExpressionAttributeValues={
+                    ":v": valor_assinatura,
+                    ":u": agora
+                },
+                ReturnValues="ALL_NEW"
+            )
+            item_atualizado = upd.get("Attributes", {})
+            logger.info("Inscrição %s atualizada isAssinatura=%s", iid, valor_assinatura)
+
+            # envia e-mail para admin
+            try:
+                enviar_email_admin_is_assinatura(item_atualizado)
+            except Exception:
+                logger.exception("Erro ao enviar email de solicitação de assinatura")
+
+            return resposta(200, {
+                "message": "Campo isAssinatura atualizado com sucesso.",
+                "inscricaoId": iid,
+                "isAssinatura": item_atualizado.get("isAssinatura", valor_assinatura)
+            })
+
+        except Exception:
+            logger.exception("Erro no endpoint /isAssinatura")
+            return resposta(500, {"error": "Erro interno ao atualizar isAssinatura"})
+
 
     # POST /clube/interesse
     if path.endswith("/clube/interesse") and method == "POST":
@@ -467,6 +525,25 @@ def enviar_email_para_admin(insc):
                    Message={"Subject":{"Data":assunto},
                             "Body":{"Html":{"Data":html}}})
     logger.info("Email admin inscrição enviado")
+
+def enviar_email_admin_is_assinatura(insc):
+    assunto = f"📄 Solicitação de Assinatura - {insc.get('curso', '')} - {insc.get('nomeCompleto', '')}"
+    html = "<h2>Foi solicitada a assinatura para a seguinte inscrição:</h2>"
+    html += "<ul>"
+    for k, v in insc.items():
+        html += f"<li><strong>{k}:</strong> {v}</li>"
+    html += "</ul>"
+
+    ses.send_email(
+        Source=REMETENTE,
+        Destination={"ToAddresses": [ADMIN_EMAIL]},
+        Message={
+            "Subject": {"Data": assunto},
+            "Body": {"Html": {"Data": html}}
+        }
+    )
+    logger.info("Email admin isAssinatura enviado para %s", ADMIN_EMAIL)
+
 
 
 def verificar_inscricao_existente(cpf, curso):

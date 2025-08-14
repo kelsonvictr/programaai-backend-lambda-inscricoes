@@ -215,12 +215,18 @@ def salvar_inscricao(event, context):
 
             logger.info("Found inscrição %s: aluno=%s, curso=%s, valor=%s", iid, aluno, curso, valor)
             link = criar_paymentlink_asaas(curso, aluno, valor, pm, iid)
-            logger.info("Asaas link created: %s", link.get("url"))
+            asaas_resp = link.get("asaas", {})  # novo formato
+
+            logger.info("Asaas link created: %s", asaas_resp.get("url"))
             return resposta(200, {
                 "inscricaoId": iid,
-                "paymentLinkId": link.get("id"),
-                "url": link.get("url")
+                "paymentMethod": pm,
+                "descontoExtraPix": link.get("descontoExtraPix", 0.0),
+                "valorFinal": link.get("valorFinal"),
+                "paymentLinkId": asaas_resp.get("id"),
+                "url": asaas_resp.get("url")
             })
+
         except Exception:
             logger.exception("Erro ao gerar paymentlink")
             return resposta(500, {"error": "Erro interno ao gerar paymentlink"})

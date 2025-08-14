@@ -50,6 +50,22 @@ def salvar_inscricao(event, context):
     qs     = event.get("queryStringParameters") or {}
     logger.info("Incoming request: path=%s method=%s qs=%s", path, method, qs)
 
+    # GET /pagamento-info?inscricaoId=...
+    if path.endswith("/pagamento-info") and method == "GET":
+        iid = (qs.get("inscricaoId") or "").strip()
+        if not iid:
+            return resposta(400, {"error": "Parâmetro 'inscricaoId' é obrigatório."})
+        try:
+            info = montar_pagamento_info(iid)
+            return resposta(200, info)
+        except ValueError as ve:
+            logger.warning("Pagamento-info inválido: %s", ve)
+            return resposta(400, {"error": str(ve)})
+        except Exception:
+            logger.exception("Erro ao montar pagamento-info")
+            return resposta(500, {"error": "Erro interno ao montar pagamento-info"})
+
+
     # POST /isAssinatura
     if path.endswith("/isAssinatura") and method == "POST":
         logger.info("isAssinatura request body: %s", event.get("body"))
@@ -389,30 +405,70 @@ def checa_cupom_e_retorna_desconto(cupom, curso):
 
 
 def criar_paymentlink_asaas(curso, aluno, valor, metodo, ext_ref):
-    hdr = {"Content-Type":"application/json", "access_token":ASAAS_API_KEY}
+    """
+    Cria PaymentLink no Asaas aplicando, quando cabível:
+    - Desconto extra PIX de R$150 para cursos Fullstack.
+
+    Retorno:
+      {
+        "asaas": <resposta JSON do Asaas>,
+        "valorFinal": <float>,
+        "descontoExtraPix": <float>
+      }
+    """
+    # Normaliza valor de entrada para Decimal (seguro p/ cálculo)
+    valor_dec = Decimal(str(valor)).quantize(Decimal("0.01"))
+
+    # Regras de desconto
+    desconto_extra = Decimal("0.00")
+    if metodo == "PIX" and FULLSTACK_NOME_CURSO in curso:
+        desconto_extra = Decimal("150.00")
+        valor_dec = (valor_dec - desconto_extra).quantize(Decimal("0.01"))
+        # Evita valor zero/negativo no Asaas
+        if valor_dec <= Decimal("0.00"):
+            valor_dec = Decimal("0.01")
+
+    hdr = {"Content-Type": "application/json", "access_token": ASAAS_API_KEY}
     nome = f"Inscrição: {curso}"
     desc = f"{nome}. Aluno: {aluno}"
+
     if metodo == "PIX":
         payload = {
-            "name": nome, "billingType": "PIX", "chargeType": "DETACHED",
-            "value": valor, "description": desc,
-            "dueDateLimitDays": 2, "externalReference": ext_ref,
+            "name": nome,
+            "billingType": "PIX",
+            "chargeType": "DETACHED",
+            "value": float(valor_dec),            # valor já com desconto (se houver)
+            "description": desc,
+            "dueDateLimitDays": 2,
+            "externalReference": ext_ref,
             "notificationEnabled": True
         }
     else:
-        tc = round(valor * 1.08, 2)
+        # Cartão segue a regra atual (acréscimo de 8% sobre o valor base sem desconto PIX)
+        tc = round(float(valor_dec) * 1.08, 2)
         payload = {
-            "name": nome, "billingType": "CREDIT_CARD", "chargeType": "INSTALLMENT",
-            "value": tc, "description": desc,
-            "dueDateLimitDays": 7, "maxInstallmentCount": 12,
-            "externalReference": ext_ref, "notificationEnabled": True
+            "name": nome,
+            "billingType": "CREDIT_CARD",
+            "chargeType": "INSTALLMENT",
+            "value": tc,
+            "description": desc,
+            "dueDateLimitDays": 7,
+            "maxInstallmentCount": 12,
+            "externalReference": ext_ref,
+            "notificationEnabled": True
         }
+
     logger.info("Asaas payload: %s", payload)
     resp = requests.post(f"{ASAAS_ENDPOINT}/paymentLinks", headers=hdr, json=payload)
     resp.raise_for_status()
     result = resp.json()
     logger.info("Asaas response: %s", result)
-    return result
+
+    return {
+        "asaas": result,
+        "valorFinal": float(valor_dec),
+        "descontoExtraPix": float(desconto_extra) if desconto_extra > 0 else 0.0
+    }
 
 
 def enviar_email_boas_vindas_clube(item):
@@ -576,6 +632,138 @@ def remover_inscricao(iid):
     table_inscricoes.delete_item(Key={"id":iid})
     logger.info("Inscrição removida: %s", iid)
     return resposta(200, {"message":"Inscrição removida"})
+
+def montar_pagamento_info(inscricao_id: str) -> dict:
+    """
+    Monta o payload de informações de pagamento para a página de Pagamento.
+      - PIX: valor base; se curso Fullstack, aplica desconto extra de R$150,00
+      - CARTÃO: valor base * 1.08; exibe 'até 12x de ...'
+      - FULLSTACK: exibe plano de 6 mensalidades de R$250,00
+    Retorna números e também strings formatadas (BRL) para o front.
+    """
+    # 1) Busca inscrição
+    resp_insc = table_inscricoes.get_item(Key={"id": inscricao_id})
+    insc = resp_insc.get("Item")
+    if not insc:
+        raise ValueError(f"Inscrição '{inscricao_id}' não encontrada.")
+
+    curso_title = insc.get("curso", "").strip()
+    if not curso_title:
+        raise ValueError("Título do curso ausente na inscrição.")
+
+    # 2) Busca curso por título
+    resp_curso = table_cursos.scan(
+        FilterExpression="title = :t",
+        ExpressionAttributeValues={":t": curso_title}
+    )
+    cursos = resp_curso.get("Items", [])
+    if not cursos:
+        raise ValueError(f"Curso '{curso_title}' não encontrado.")
+    curso_item = cursos[0]
+
+    # 3) Extrai preço base do curso (string tipo 'R$1499,99')
+    raw_price = (curso_item.get("price") or "").strip()
+    if not raw_price:
+        raise ValueError(f"Preço não definido para o curso '{curso_title}'.")
+
+    clean_price = raw_price.replace("R$", "").replace(".", "").replace(",", ".").strip()
+    try:
+        base = Decimal(clean_price).quantize(Decimal("0.01"))
+    except Exception:
+        raise ValueError(f"Preço inválido do curso: {raw_price}")
+
+    is_fullstack = FULLSTACK_NOME_CURSO in curso_title
+
+    # 4) Regra PIX
+    desconto_pix = Decimal("150.00") if is_fullstack else Decimal("0.00")
+    pix_valor = (base - desconto_pix).quantize(Decimal("0.01"))
+    if pix_valor <= Decimal("0.00"):
+        pix_valor = Decimal("0.01")
+
+    # 5) Regra CARTÃO (8%)
+    cartao_valor = (base * Decimal("1.08")).quantize(Decimal("0.01"))
+    cartao_12x = (cartao_valor / Decimal("12")).quantize(Decimal("0.01"))
+
+    # 6) Plano Mensalidades (somente Fullstack)
+    mensalidades_info = {
+        "disponivel": False,
+        "parcelas": 0,
+        "valorParcela": 0.0,
+        "valorParcelaFmt": "",
+        "mensagem": ""
+    }
+    if is_fullstack:
+        mensalidades_info = {
+            "disponivel": True,
+            "parcelas": 6,
+            "valorParcela": 250.00,
+            "valorParcelaFmt": format_brl(250.00),
+            "mensagem": (
+                "Plano de 6 mensalidades: você recebe todo mês a cobrança de "
+                f"{format_brl(250.00)} (pagamento via PIX ou boleto). Simples e previsível. 😉"
+            )
+        }
+
+    # 7) Mensagens de marketing (com BRL formatado)
+    if is_fullstack and desconto_pix > 0:
+        msg_pix = (
+            f"PIX com DESCONTO EXTRA de {format_brl(desconto_pix)} exclusivo para Fullstack. "
+            f"Aproveite: de {format_brl(base)} por {format_brl(pix_valor)} no PIX! 🎉"
+        )
+    else:
+        msg_pix = (
+            f"Economize no PIX: pagamento à vista e acesso garantido. Valor: {format_brl(pix_valor)}."
+        )
+
+    msg_cartao = (
+        f"No cartão: {format_brl(cartao_valor)} (já com taxas). "
+        f"Parcele em até 12x de {format_brl(cartao_12x)} e comece agora mesmo! 💳🚀"
+    )
+
+    # 8) Retorno “pronto para tela” (números + strings formatadas)
+    return {
+        "inscricaoId": inscricao_id,
+        "curso": {
+            "title": curso_title,
+            "ativo": bool(curso_item.get("ativo", True))
+        },
+        "precoBase": float(base),
+        "precoBaseFmt": format_brl(base),
+        "pix": {
+            "valor": float(pix_valor),
+            "valorFmt": format_brl(pix_valor),
+            "descontoExtraAplicado": float(desconto_pix),
+            "descontoExtraAplicadoFmt": format_brl(desconto_pix) if desconto_pix > 0 else "",
+            "mensagem": msg_pix
+        },
+        "cartao": {
+            "valor": float(cartao_valor),
+            "valorFmt": format_brl(cartao_valor),
+            "ate12x": {
+                "parcelas": 12,
+                "valorParcela": float(cartao_12x),
+                "valorParcelaFmt": format_brl(cartao_12x)
+            },
+            "mensagem": msg_cartao
+        },
+        "mensalidades": mensalidades_info,
+        "observacoesCurso": {
+            "obsPrice": curso_item.get("obsPrice") or "",
+            "modalidade": curso_item.get("modalidade") or "",
+            "horario": curso_item.get("horario") or ""
+        }
+    }
+
+
+def format_brl(value) -> str:
+    """
+    Formata número/Decimal como BRL (pt-BR), ex.: 1499.9 -> 'R$ 1.499,90'
+    """
+    d = Decimal(str(value)).quantize(Decimal("0.01"))
+    s = f"{d:,.2f}"                 # '1,234.56'
+    s = s.replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"R$ {s}"
+
 
 
 def validar_jwt(hdr):

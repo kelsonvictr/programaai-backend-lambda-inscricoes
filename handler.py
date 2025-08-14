@@ -9,6 +9,7 @@ import boto3
 import requests
 import firebase_admin
 from firebase_admin import auth, credentials
+from botocore.exceptions import ClientError
 
 # Setup logging
 logger = logging.getLogger()
@@ -65,7 +66,6 @@ def salvar_inscricao(event, context):
             logger.exception("Erro ao montar pagamento-info")
             return resposta(500, {"error": "Erro interno ao montar pagamento-info"})
 
-
     # POST /isAssinatura
     if path.endswith("/isAssinatura") and method == "POST":
         logger.info("isAssinatura request body: %s", event.get("body"))
@@ -85,42 +85,67 @@ def salvar_inscricao(event, context):
                 logger.warning("Inscrição %s não encontrada em /isAssinatura", iid)
                 return resposta(404, {"error": f"Inscrição '{iid}' não encontrada"})
 
-            # valida curso
             nome_curso = insc.get("curso", "")
             if FULLSTACK_NOME_CURSO not in nome_curso:
                 logger.info("Bloqueado /isAssinatura: curso '%s' não contém '%s'", nome_curso, FULLSTACK_NOME_CURSO)
-                return resposta(403, {"error": f"Ação permitida apenas para inscrições do curso que contenha '{FULLSTACK_NOME_CURSO}'."})
+                return resposta(403, {
+                    "error": f"Ação permitida apenas para inscrições do curso que contenha '{FULLSTACK_NOME_CURSO}'."})
 
-            # atualiza campo
+            # Já existe pedido gravado?
+            ja_solicitada = bool(insc.get("isAssinatura"))
+            if valor_assinatura and ja_solicitada:
+                return resposta(200, {
+                    "message": "Assinatura já havia sido solicitada anteriormente.",
+                    "inscricaoId": iid,
+                    "isAssinatura": True,
+                    "alreadyExisted": True,
+                    "assinaturaSolicitadaEm": insc.get("assinaturaSolicitadaEm")
+                })
+
+            # Atualiza apenas se mudou (idempotente)
             agora = datetime.now(timezone(timedelta(hours=-3))).isoformat()
-            upd = table_inscricoes.update_item(
-                Key={"id": iid},
-                UpdateExpression="SET isAssinatura = :v, updatedAt = :u",
-                ExpressionAttributeValues={
-                    ":v": valor_assinatura,
-                    ":u": agora
-                },
-                ReturnValues="ALL_NEW"
-            )
-            item_atualizado = upd.get("Attributes", {})
-            logger.info("Inscrição %s atualizada isAssinatura=%s", iid, valor_assinatura)
-
-            # envia e-mail para admin
             try:
-                enviar_email_admin_is_assinatura(item_atualizado)
-            except Exception:
-                logger.exception("Erro ao enviar email de solicitação de assinatura")
+                upd = table_inscricoes.update_item(
+                    Key={"id": iid},
+                    UpdateExpression="SET isAssinatura = :v, assinaturaSolicitadaEm = :u, updatedAt = :u",
+                    ConditionExpression="attribute_not_exists(isAssinatura) OR isAssinatura <> :v",
+                    ExpressionAttributeValues={":v": valor_assinatura, ":u": agora},
+                    ReturnValues="ALL_NEW"
+                )
+                item_atualizado = upd.get("Attributes", {})
+                logger.info("Inscrição %s atualizada isAssinatura=%s", iid, valor_assinatura)
 
-            return resposta(200, {
-                "message": "Campo isAssinatura atualizado com sucesso.",
-                "inscricaoId": iid,
-                "isAssinatura": item_atualizado.get("isAssinatura", valor_assinatura)
-            })
+                # e-mails: admin + aluno
+                try:
+                    enviar_email_admin_is_assinatura(item_atualizado)
+                except Exception:
+                    logger.exception("Erro ao enviar email admin de assinatura")
+                try:
+                    enviar_email_confirmacao_assinatura_aluno(item_atualizado)
+                except Exception:
+                    logger.exception("Erro ao enviar email aluno de assinatura")
+
+                return resposta(200, {
+                    "message": "Solicitação de pagamento em mensalidades registrada com sucesso.",
+                    "inscricaoId": iid,
+                    "isAssinatura": True,
+                    "assinaturaSolicitadaEm": agora
+                })
+            except ClientError as e:
+                if e.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+                    # outro processo gravou; comporta-se como já existente
+                    return resposta(200, {
+                        "message": "Assinatura já havia sido solicitada anteriormente.",
+                        "inscricaoId": iid,
+                        "isAssinatura": True,
+                        "alreadyExisted": True,
+                        "assinaturaSolicitadaEm": insc.get("assinaturaSolicitadaEm") or agora
+                    })
+                raise
 
         except Exception:
             logger.exception("Erro no endpoint /isAssinatura")
             return resposta(500, {"error": "Erro interno ao atualizar isAssinatura"})
-
 
     # POST /clube/interesse
     if path.endswith("/clube/interesse") and method == "POST":
@@ -496,6 +521,34 @@ def enviar_email_admin_clube(item):
                             "Body":{"Html":{"Data":html}}})
     logger.info("Email admin clube enviado")
 
+def enviar_email_confirmacao_assinatura_aluno(insc):
+    nome = insc.get("nomeCompleto", "")
+    curso = insc.get("curso", "")
+    assunto = "Recebemos sua solicitação de pagamento em mensalidades"
+    html = f"""
+    <html>
+      <body style="font-family:Arial, sans-serif; line-height:1.6; color:#333;">
+        <div style="text-align:center; margin-bottom:20px;">
+          <img src="https://programaai.dev/assets/logo-BPg_3cKF.png" alt="programa AI" style="height:50px;" />
+        </div>
+        <h2 style="color:#0056b3; margin-bottom:0.25em;">Olá, {nome}!</h2>
+        <p>Recebemos sua solicitação para pagar o curso <strong>{curso}</strong> em <strong>mensalidades</strong>.</p>
+        <ul>
+          <li>Nossa equipe vai analisar a solicitação e entraremos em contato por <strong>e-mail</strong> e <strong>WhatsApp</strong>.</li>
+          <li>Quando aprovado, você receberá do Asaas o e-mail com a <strong>1ª mensalidade</strong> para pagamento.</li>
+        </ul>
+        <p>Caso precise falar conosco, é só responder este e-mail ou enviar mensagem no WhatsApp.</p>
+        <p>Obrigado por estudar com a gente! 🚀</p>
+      </body>
+    </html>
+    """
+    ses.send_email(
+        Source=REMETENTE,
+        Destination={"ToAddresses": [insc.get("email")]},
+        Message={"Subject": {"Data": assunto}, "Body": {"Html": {"Data": html}}}
+    )
+    logger.info("Email de confirmação de assinatura enviado a %s", insc.get("email"))
+
 
 def enviar_email_para_aluno(insc):
     inscricao_id = insc["id"]
@@ -751,6 +804,10 @@ def montar_pagamento_info(inscricao_id: str) -> dict:
                 "valorParcelaFmt": format_brl(cartao_12x)
             },
             "mensagem": msg_cartao
+        },
+        "assinatura": {
+            "solicitada": bool(insc.get("isAssinatura", False)),
+            "solicitadaEm": insc.get("assinaturaSolicitadaEm")
         },
         "mensalidades": mensalidades_info,
         "observacoesCurso": {

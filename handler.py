@@ -695,10 +695,13 @@ def remover_inscricao(iid):
 def montar_pagamento_info(inscricao_id: str) -> dict:
     """
     Monta o payload de informações de pagamento para a página de Pagamento.
-      - PIX: valor base; se curso Fullstack, aplica desconto extra de R$150,00
-      - CARTÃO: valor base * 1.08; exibe 'até 12x de ...'
+      - Base de preço PRIORITÁRIA:
+        1) valorCurso (da inscrição, já com descontos aplicados)
+        2) valorOriginal (da inscrição)
+        3) price do curso (tabela Cursos) como fallback
+      - PIX: se curso Fullstack, aplica desconto extra de R$150,00
+      - CARTÃO: base * 1.08; exibe 'até 12x de ...'
       - FULLSTACK: exibe plano de 6 mensalidades de R$250,00
-    Retorna números e também strings formatadas (BRL) para o front.
     """
     # 1) Busca inscrição
     resp_insc = table_inscricoes.get_item(Key={"id": inscricao_id})
@@ -706,11 +709,11 @@ def montar_pagamento_info(inscricao_id: str) -> dict:
     if not insc:
         raise ValueError(f"Inscrição '{inscricao_id}' não encontrada.")
 
-    curso_title = insc.get("curso", "").strip()
+    curso_title = (insc.get("curso") or "").strip()
     if not curso_title:
         raise ValueError("Título do curso ausente na inscrição.")
 
-    # 2) Busca curso por título
+    # 2) Busca curso por título (para metadados e fallback de preço)
     resp_curso = table_cursos.scan(
         FilterExpression="title = :t",
         ExpressionAttributeValues={":t": curso_title}
@@ -720,20 +723,33 @@ def montar_pagamento_info(inscricao_id: str) -> dict:
         raise ValueError(f"Curso '{curso_title}' não encontrado.")
     curso_item = cursos[0]
 
-    # 3) Extrai preço base do curso (string tipo 'R$1499,99')
-    raw_price = (curso_item.get("price") or "").strip()
-    if not raw_price:
-        raise ValueError(f"Preço não definido para o curso '{curso_title}'.")
+    # --- NOVO: escolhe a base priorizando valores salvos na inscrição ---
+    def _to_decimal(v):
+        if v is None or v == "":
+            return None
+        try:
+            # Decimal do DynamoDB já vem como Decimal; str cobre float/int
+            return Decimal(str(v)).quantize(Decimal("0.01"))
+        except Exception:
+            return None
 
-    clean_price = raw_price.replace("R$", "").replace(".", "").replace(",", ".").strip()
-    try:
-        base = Decimal(clean_price).quantize(Decimal("0.01"))
-    except Exception:
-        raise ValueError(f"Preço inválido do curso: {raw_price}")
+    base = _to_decimal(insc.get("valorCurso")) or _to_decimal(insc.get("valorOriginal"))
+
+    if base is None:
+        # Fallback: pega do curso (string tipo 'R$1.499,99')
+        raw_price = (curso_item.get("price") or "").strip()
+        if not raw_price:
+            raise ValueError(f"Preço não definido para o curso '{curso_title}'.")
+        clean_price = raw_price.replace("R$", "").replace(".", "").replace(",", ".").strip()
+        try:
+            base = Decimal(clean_price).quantize(Decimal("0.01"))
+        except Exception:
+            raise ValueError(f"Preço inválido do curso: {raw_price}")
+    # --- FIM DO NOVO TRECHO ---
 
     is_fullstack = FULLSTACK_NOME_CURSO in curso_title
 
-    # 4) Regra PIX
+    # 4) Regra PIX (desconto extra só para Fullstack)
     desconto_pix = Decimal("150.00") if is_fullstack else Decimal("0.00")
     pix_valor = (base - desconto_pix).quantize(Decimal("0.01"))
     if pix_valor <= Decimal("0.00"):
@@ -743,7 +759,7 @@ def montar_pagamento_info(inscricao_id: str) -> dict:
     cartao_valor = (base * Decimal("1.08")).quantize(Decimal("0.01"))
     cartao_12x = (cartao_valor / Decimal("12")).quantize(Decimal("0.01"))
 
-    # 6) Plano Mensalidades (somente Fullstack)
+    # 6) Plano de Mensalidades (somente Fullstack)
     mensalidades_info = {
         "disponivel": False,
         "parcelas": 0,
@@ -763,7 +779,7 @@ def montar_pagamento_info(inscricao_id: str) -> dict:
             )
         }
 
-    # 7) Mensagens de marketing (com BRL formatado)
+    # 7) Mensagens (com BRL formatado)
     if is_fullstack and desconto_pix > 0:
         msg_pix = (
             f"PIX com DESCONTO EXTRA de {format_brl(desconto_pix)} exclusivo para Fullstack. "
@@ -779,13 +795,14 @@ def montar_pagamento_info(inscricao_id: str) -> dict:
         f"Parcele em até 12x de {format_brl(cartao_12x)} e comece agora mesmo! 💳🚀"
     )
 
-    # 8) Retorno “pronto para tela” (números + strings formatadas)
+    # 8) Retorno para o front
     return {
         "inscricaoId": inscricao_id,
         "curso": {
             "title": curso_title,
             "ativo": bool(curso_item.get("ativo", True))
         },
+        # OBS: precoBase agora reflete a base escolhida (valorCurso > valorOriginal > price do curso)
         "precoBase": float(base),
         "precoBaseFmt": format_brl(base),
         "pix": {

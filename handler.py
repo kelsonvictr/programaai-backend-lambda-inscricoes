@@ -17,10 +17,11 @@ logger.setLevel(logging.INFO)
 
 # AWS resources
 dynamodb         = boto3.resource('dynamodb')
-table_inscricoes = dynamodb.Table('Inscricoes')
-table_interesse  = dynamodb.Table('ListaInteresse')
-table_cursos     = dynamodb.Table('Cursos')
-table_descontos  = dynamodb.Table('Descontos')
+table_inscricoes  = dynamodb.Table('Inscricoes')
+table_interesse   = dynamodb.Table('ListaInteresse')
+table_lista_espera = dynamodb.Table('ListaDeEspera')
+table_cursos      = dynamodb.Table('Cursos')
+table_descontos   = dynamodb.Table('Descontos')
 ses              = boto3.client('ses')
 s3               = boto3.client('s3')
 
@@ -146,6 +147,48 @@ def salvar_inscricao(event, context):
         except Exception:
             logger.exception("Erro no endpoint /isAssinatura")
             return resposta(500, {"error": "Erro interno ao atualizar isAssinatura"})
+
+    # POST /lista-espera
+    if path.endswith("/lista-espera") and method == "POST":
+        body_raw = event.get("body")
+        logger.info("Lista de Espera payload: %s", body_raw)
+        if not body_raw:
+            return resposta(400, {"error": "Body é obrigatório."})
+        body = json.loads(body_raw)
+        if body.get("website"):  # honeypot simples
+            logger.warning("Honeypot acionado em lista-espera")
+            return resposta(400, {"error": "Solicitação inválida."})
+
+        nome = (body.get("nome") or "").strip()
+        curso = (body.get("curso") or "").strip()
+        email = (body.get("email") or "").strip()
+        telefone = (body.get("telefone") or "").strip()
+        como_conheceu = (body.get("comoConheceu") or "").strip()
+
+        if not all([nome, curso, email, telefone, como_conheceu]):
+            logger.warning("Campos obrigatórios ausentes em lista-espera: %s", body)
+            return resposta(400, {"error": "Nome, curso, email, telefone e comoConheceu são obrigatórios."})
+
+        agora = datetime.now(timezone(timedelta(hours=-3))).isoformat()
+        item = {
+            "id": str(uuid.uuid4()),
+            "nome": nome,
+            "curso": curso,
+            "email": email,
+            "telefone": telefone,
+            "comoConheceu": como_conheceu,
+            "criadoEm": agora
+        }
+
+        table_lista_espera.put_item(Item=item)
+        logger.info("Registro salvo na ListaDeEspera: %s", item)
+
+        try:
+            enviar_email_admin_lista_espera(item)
+        except Exception:
+            logger.exception("Erro ao enviar e-mail para admin na lista-espera")
+
+        return resposta(201, {"message": "Registro incluído na lista de espera."})
 
     # POST /clube/interesse
     if path.endswith("/clube/interesse") and method == "POST":
@@ -520,6 +563,23 @@ def enviar_email_admin_clube(item):
                    Message={"Subject":{"Data":assunto},
                             "Body":{"Html":{"Data":html}}})
     logger.info("Email admin clube enviado")
+
+def enviar_email_admin_lista_espera(item):
+    assunto = f"Nova inscrição na Lista de Espera: {item['nome']}"
+    html = (
+        "<h2>Nova inscrição na Lista de Espera</h2>"
+        f"<p><strong>Nome:</strong> {item['nome']}</p>"
+        f"<p><strong>Curso:</strong> {item['curso']}</p>"
+        f"<p><strong>Email:</strong> {item['email']}</p>"
+        f"<p><strong>Telefone:</strong> {item['telefone']}</p>"
+        f"<p><strong>Como conheceu:</strong> {item['comoConheceu']}</p>"
+        f"<p><strong>Criado em:</strong> {item['criadoEm']}</p>"
+    )
+    ses.send_email(Source=REMETENTE,
+                   Destination={"ToAddresses":[ADMIN_EMAIL]},
+                   Message={"Subject":{"Data":assunto},
+                            "Body":{"Html":{"Data":html}}})
+    logger.info("Email admin lista de espera enviado")
 
 def enviar_email_confirmacao_assinatura_aluno(insc):
     nome = insc.get("nomeCompleto", "")

@@ -401,9 +401,12 @@ def salvar_inscricao(event, context):
             try:
                 table_inscricoes.update_item(
                     Key={"id": iid},
-                    UpdateExpression="SET paymentLinks.#pm = :v, updatedAt = :u",
+                    UpdateExpression=(
+                        "SET paymentLinks = if_not_exists(paymentLinks, :empty), "
+                        "paymentLinks.#pm = :v, updatedAt = :u"
+                    ),
                     ExpressionAttributeNames={"#pm": pm},
-                    ExpressionAttributeValues={":v": link_info, ":u": agora}
+                    ExpressionAttributeValues={":v": link_info, ":u": agora, ":empty": {}}
                 )
             except Exception:
                 logger.exception("Erro ao salvar paymentLink na inscrição %s", iid)
@@ -642,21 +645,30 @@ def criar_paymentlink_asaas(curso, aluno, valor, metodo, ext_ref):
     else:
         # Cartão segue a regra atual (acréscimo de 8% sobre o valor base sem desconto PIX)
         tc = round(float(valor_dec) * 1.08, 2)
+        charge_type = "INSTALLMENT"
+        max_installments = 12
+        if tc < 10:
+            charge_type = "DETACHED"
+            max_installments = 1
         payload = {
             "name": nome,
             "billingType": "CREDIT_CARD",
-            "chargeType": "INSTALLMENT",
+            "chargeType": charge_type,
             "value": tc,
             "description": desc,
             "dueDateLimitDays": 7,
-            "maxInstallmentCount": 12,
+            "maxInstallmentCount": max_installments,
             "externalReference": ext_ref,
             "notificationEnabled": True
         }
 
     logger.info("Asaas payload: %s", payload)
     resp = requests.post(f"{ASAAS_ENDPOINT}/paymentLinks", headers=hdr, json=payload)
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError:
+        logger.error("Asaas error status=%s body=%s", resp.status_code, resp.text)
+        raise
     result = resp.json()
     logger.info("Asaas response: %s", result)
 

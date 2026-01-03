@@ -401,12 +401,14 @@ def salvar_inscricao(event, context):
             try:
                 table_inscricoes.update_item(
                     Key={"id": iid},
-                    UpdateExpression=(
-                        "SET paymentLinks = if_not_exists(paymentLinks, :empty), "
-                        "paymentLinks.#pm = :v, updatedAt = :u"
-                    ),
+                    UpdateExpression="SET paymentLinks = if_not_exists(paymentLinks, :empty)",
+                    ExpressionAttributeValues={":empty": {}}
+                )
+                table_inscricoes.update_item(
+                    Key={"id": iid},
+                    UpdateExpression="SET paymentLinks.#pm = :v, updatedAt = :u",
                     ExpressionAttributeNames={"#pm": pm},
-                    ExpressionAttributeValues={":v": link_info, ":u": agora, ":empty": {}}
+                    ExpressionAttributeValues={":v": link_info, ":u": agora}
                 )
             except Exception:
                 logger.exception("Erro ao salvar paymentLink na inscrição %s", iid)

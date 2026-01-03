@@ -67,6 +67,71 @@ def salvar_inscricao(event, context):
             logger.exception("Erro ao montar pagamento-info")
             return resposta(500, {"error": "Erro interno ao montar pagamento-info"})
 
+    # POST /asaas/webhook
+    if path.endswith("/asaas/webhook") and method == "POST":
+        try:
+            body = json.loads(event.get("body") or "{}")
+        except Exception:
+            logger.warning("Webhook Asaas com body inválido")
+            return resposta(400, {"error": "Body inválido"})
+
+        event_type = (body.get("event") or body.get("eventType") or "").strip()
+        payment = body.get("payment") or {}
+        external_ref = (payment.get("externalReference") or "").strip()
+
+        if not external_ref:
+            logger.warning("Webhook Asaas sem externalReference: %s", body)
+            return resposta(200, {"ok": True})
+
+        status = payment.get("status")
+        now = datetime.now(timezone(timedelta(hours=-3))).isoformat()
+
+        def _to_decimal(v):
+            if v is None or v == "":
+                return None
+            try:
+                return Decimal(str(v)).quantize(Decimal("0.01"))
+            except Exception:
+                return None
+
+        updates = {
+            ":s": status,
+            ":pid": payment.get("id"),
+            ":evt": event_type or None,
+            ":bt": payment.get("billingType"),
+            ":v": _to_decimal(payment.get("value")),
+            ":rv": _to_decimal(payment.get("receivedValue")),
+            ":c": payment.get("customer"),
+            ":u": now
+        }
+
+        try:
+            table_inscricoes.update_item(
+                Key={"id": external_ref},
+                UpdateExpression=(
+                    "SET asaasPaymentStatus = :s, "
+                    "asaasPaymentId = :pid, "
+                    "asaasPaymentEvent = :evt, "
+                    "asaasPaymentBillingType = :bt, "
+                    "asaasPaymentValue = :v, "
+                    "asaasPaymentReceivedValue = :rv, "
+                    "asaasPaymentCustomer = :c, "
+                    "asaasPaymentUpdatedAt = :u, "
+                    "updatedAt = :u"
+                ),
+                ConditionExpression="attribute_exists(id)",
+                ExpressionAttributeValues=updates
+            )
+            logger.info("Webhook Asaas atualizado: %s status=%s", external_ref, status)
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+                logger.warning("Inscrição não encontrada para externalReference=%s", external_ref)
+                return resposta(200, {"ok": True})
+            logger.exception("Erro ao atualizar inscrição via webhook Asaas")
+            return resposta(500, {"error": "Erro ao atualizar inscrição"})
+
+        return resposta(200, {"ok": True})
+
     # POST /isAssinatura
     if path.endswith("/isAssinatura") and method == "POST":
         logger.info("isAssinatura request body: %s", event.get("body"))
@@ -276,6 +341,39 @@ def salvar_inscricao(event, context):
 
             aluno = insc.get("nomeCompleto", "")
             curso = insc.get("curso", "")
+
+            # Reaproveita link existente para evitar múltiplas cobranças por clique
+            existing_links = insc.get("paymentLinks") or {}
+            existing = existing_links.get(pm) or {}
+            existing_url = existing.get("url")
+            existing_created = existing.get("createdAt")
+            existing_ttl_days = existing.get("dueDateLimitDays")
+            if not existing_ttl_days:
+                existing_ttl_days = 2 if pm == "PIX" else 7
+            link_expired = False
+            if existing_created:
+                try:
+                    created_dt = datetime.fromisoformat(existing_created)
+                    expires_dt = created_dt + timedelta(days=int(existing_ttl_days))
+                    link_expired = datetime.now(timezone(timedelta(hours=-3))) > expires_dt
+                except Exception:
+                    logger.warning("Não foi possível validar expiração do paymentLink para %s", iid)
+            if existing_url and not link_expired:
+                valor_final = existing.get("valorFinal")
+                desconto_extra = existing.get("descontoExtraPix", 0.0)
+                if isinstance(valor_final, Decimal):
+                    valor_final = float(valor_final)
+                if isinstance(desconto_extra, Decimal):
+                    desconto_extra = float(desconto_extra)
+                return resposta(200, {
+                    "inscricaoId": iid,
+                    "paymentMethod": pm,
+                    "descontoExtraPix": desconto_extra or 0.0,
+                    "valorFinal": valor_final,
+                    "paymentLinkId": existing.get("id"),
+                    "url": existing_url
+                })
+
             # Aqui pegamos o valor já calculado e armazenado na inscrição:
             valor_decimal = insc.get("valorCurso", 0)
             # Se vier como Decimal, converte para float:
@@ -286,6 +384,30 @@ def salvar_inscricao(event, context):
             asaas_resp = link.get("asaas", {})  # novo formato
 
             logger.info("Asaas link created: %s", asaas_resp.get("url"))
+
+            # Persiste link por método para reutilização futura
+            agora = datetime.now(timezone(timedelta(hours=-3))).isoformat()
+            valor_final_dec = Decimal(str(link.get("valorFinal"))).quantize(Decimal("0.01"))
+            desconto_dec = Decimal(str(link.get("descontoExtraPix", 0.0))).quantize(Decimal("0.01"))
+            link_info = {
+                "id": asaas_resp.get("id"),
+                "url": asaas_resp.get("url"),
+                "paymentMethod": pm,
+                "createdAt": agora,
+                "dueDateLimitDays": 2 if pm == "PIX" else 7,
+                "valorFinal": valor_final_dec,
+                "descontoExtraPix": desconto_dec
+            }
+            try:
+                table_inscricoes.update_item(
+                    Key={"id": iid},
+                    UpdateExpression="SET paymentLinks.#pm = :v, updatedAt = :u",
+                    ExpressionAttributeNames={"#pm": pm},
+                    ExpressionAttributeValues={":v": link_info, ":u": agora}
+                )
+            except Exception:
+                logger.exception("Erro ao salvar paymentLink na inscrição %s", iid)
+
             return resposta(200, {
                 "inscricaoId": iid,
                 "paymentMethod": pm,
